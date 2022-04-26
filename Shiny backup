@@ -1,0 +1,3887 @@
+library(shiny)
+library(shinyauthr)
+library(dplyr)
+library(DT)
+library(ggplot2)
+library(shinydashboard)
+library(plotly)
+library(data.table)
+library(rhandsontable)
+library(jsonlite)
+library(rjson)
+library(editData)
+library(RcetsaAPI)
+library(BiocManager)
+#BiocManager::install("TPP")
+library(BBmisc)
+library(readxl)
+library(TPP)
+#library(UniProt.ws)
+library(plyr)
+library(htmltools)
+library(dbplyr)
+library(tibble)
+library(DESeq2)
+library(shinyjs)
+#library(shinythemes)
+#library(tidyverse)
+library(lobstr)
+library(EnhancedVolcano)
+library(gridExtra)
+library(grid)
+library(shinyBS)
+library(writexl)
+print(mem_used())
+user_base <- tibble::tibble(
+  user = c("firstuser"),
+  password = sapply(c("firstpass1"), sodium::password_store),
+  permissions = c("user","non-user"),
+  name = c("User One","User Two")
+)
+
+printText <- function() {
+  for(i in 1:10){
+    Sys.sleep(0.1)
+    shinyjs::html("text", paste("My text", i), add = TRUE)
+    y = i + 1
+  }
+  return(y)
+}
+
+options(dplyr.print_max = 1000)
+options(shiny.reactlog = TRUE)
+options(shiny.trace = TRUE)
+options(shiny.maxRequestSize = 30*1024^2)
+shell.exec  <- function(x)
+{
+  # replacement for shell.exe (doesn't exist on MAC)
+  if (exists("shell.exec",where = "package:base"))
+    return(base::shell.exec(x))
+  comm <- paste("open",x)
+  return(system(comm))
+}
+
+#Use table row numbers from content as selected group, or have some drop down select like with temp conc but on dashboard body to match with given temps
+process_choices <- c("Thermal Shift", "Drug Response", "Single Sample Analysis")
+experiment_choices <- c("Label Free", "TMT", "Di-Methyl")
+conc_unit_choices <- c("ml", "ul", "pl", "uM")
+#up <- UniProt.ws(taxId=9606)
+ 
+controlnames<-c("Control")
+drugnames<-c("Staurosporine")
+
+ui <- fluidPage(id="tabs",
+  titlePanel("CETSA Pipeline"),
+  mainPanel(
+  
+  tabsetPanel(id="tabs", type ="tabs",
+    tabPanel("Manuel",
+             modalDialog(
+                #session=getDefaultReactiveDomain(),
+               title = NULL,
+                #textInput('username', "Enter Username"),
+                #textInput("password", "Enter Password"),
+                 #actionButton("authenticate", "Authenticate"),
+                #shinyauthr::loginUI(id="login"),
+               div(
+                id = "login-basic", 
+                style = "width: 500px; max-width: 100%; margin: 0 auto;",
+                
+                div(
+                  class = "well",
+                  h4(class = "text-center", "Please login"),
+                  p(class = "text-center", 
+                    tags$small("First approach login form")
+                  ),
+                  
+                  textInput(
+                    inputId     = "ti_user_name_basic", 
+                    label       = tagList(icon("user"), 
+                                          "User Name"),
+                    placeholder = "Enter user name"
+                  ),
+                  
+                  passwordInput(
+                    inputId     = "ti_password_basic", 
+                    label       = tagList(icon("unlock-alt"), 
+                                          "Password"), 
+                    placeholder = "Enter password"
+                  ), 
+                  
+                  div(
+                     class = "text-center",
+                     actionButton(
+                       inputId = "ab_login_button_basic", 
+                       label = "Log in",
+                       class = "btn-primary"
+                     )
+                   )
+                 )
+               ),
+               uiOutput(outputId = "display_content_basic"),
+               uiOutput(outputId = "display_content_basic_not"),
+               #footer = modalButton("Dismiss")
+               footer = NULL
+             ),
+             #actionButton("hidetab", "Hide Experiment Metadata"),
+             shinyjs::useShinyjs(),
+             #titlePanel("Print consol output"),
+             #sidebarLayout(
+               #sidebarPanel(actionButton("go", "Go")),
+               #mainPanel(
+               #)
+             #),
+             h1("How to Operate CETSA Pipeline"),
+             
+             tabsetPanel(
+               tabPanel("Project Identification", h4("Clicking on the 'Display List of Projects' button will bring up the list of current projects in the database. Clicking on the desired project within the list will assign that project to have generated data uploaded to. If you wish to upload data to a new project that’s not listed, you can input the three main credentials for the new project and click 'Add Project'. Clicking on the ‘Display List of Projects’ button again will refresh the list to include the newly added project for you to select."),),
+               tabPanel("Experiment Metadata", h4("Inputting the main data of the experiment is done here, with the data corresponding with either a Thermal Shift, Drug Response, or Single Sample analysis. The file to upload is the main file of data from the initial experiment, commonly using ‘Reporter intensity corrected’ columns within the file."),),
+               tabPanel("Data", h4("This step involves selecting columns of data that you wish to analyze from the uploaded file from the Experiment Metadata step. Commonly, all of the Reporter Intensity Corrected columns are selected for full analysis of the data."),),
+               tabPanel("Analysis", h4("How to analyze the inputted and selected data in previous steps occurs here. For the Thermal Shift process the Melting Curve analysis is used, and Drug Response and Single Sample Analysis are directly associated with the selected process. Uploading a list of proteins that you find to be targets for this analysis can be done here, and selecting an analysis for selected genes will produce the analysis results for those pre-selected proteins and genes. (Not fully operational yet)"),),
+               tabPanel("Results", h4("After executing analysis from the previous step, clicking the ‘Upload Generated Datafile’ button will compile appropriate data from the analysis and save it to the backend under the selected project. As well, a portion of the data uploaded will also be displayed below for you to make sure the data seems well and good. You also have the ability to download a portion of the results of the analysis corresponding to a list of expected targets/kineases incase the results of those targets specifically is what you were looking for."),),
+             ),
+             
+             h2("Experiment Metadata"),
+             h4("Please fill in all of the approriate metadata for your desired experiment run. Near the bottom of the page, please upload your file of data to the interface to be used in further steps. Then click the 'Process Data' Button to upload the metadata to the main server."),
+             h2("Data"),
+             h4("Please select the groups of data that you would like to specifically analyze. Then, at the bottom of the page, please fill in the temperature/concentration values in that they match up with the selected groups of data."),
+             #shinyauthr::loginUI(id="login"),
+             #div(
+              # id = "login-basic", 
+              # style = "width: 500px; max-width: 100%; margin: 0 auto;",
+              # 
+              # div(
+              #   class = "well",
+              #   h4(class = "text-center", "Please login"),
+              #   p(class = "text-center", 
+              #     tags$small("First approach login form")
+              #   ),
+              #   
+              #   textInput(
+              #     inputId     = "ti_user_name_basic", 
+              #     label       = tagList(icon("user"), 
+              #                           "User Name"),
+              #     placeholder = "Enter user name"
+              #   ),
+              #   
+              #   passwordInput(
+              #     inputId     = "ti_password_basic", 
+              #     label       = tagList(icon("unlock-alt"), 
+              #                           "Password"), 
+              #     placeholder = "Enter password"
+              #   ), 
+              #   
+              #   div(
+             #      class = "text-center",
+             #      actionButton(
+             #        inputId = "ab_login_button_basic", 
+             #        label = "Log in",
+             #        class = "btn-primary"
+             #      )
+             #    )
+             #  )
+             #),
+             #uiOutput(outputId = "display_content_basic"),
+             
+             #actionButton("listproject", "Generate List of Projects"),
+             #tableOutput("projecttable"),
+             #dataTableOutput("projecttable"),
+             
+            # bsCollapse(id="collapseExample",open = "Panel 2",
+            #            bsCollapsePanel("Panel 1", "Text", style = "info"),
+            #            bsCollapsePanel("Panel 2", "Text 2", "text", style = "success"))
+             ),
+    tabPanel("Project Identification",
+             h2("Assinging what Project to work with"),
+             h4("You can click on the 'Generate List of Project' button to bring up the list of current projects in the database. Clicking on the desired project will select that one to have data uploaded to. If you wish to upload data to a new project entry, you can input the three main credentials below and click 'Add Project' and clicking on the generating list of projects button again will refresh the list to include the newly added project for you to select insteaed."),
+             fluidRow(
+               column(6, textInput("projecttype", "Type of Project (In house, Collaborative Project, ect.)"),
+                      textInput("name", "Name of the Project"),
+                      textInput("lab", "Name of PI or Organization"),
+               )),
+             actionButton("add_project", "Add Project"),
+        actionButton("listproject", "Display List of Projects"),
+        dataTableOutput("projecttable"),
+        #textInput('projectid', "New Project or Existing Project to Edit (Name)"),
+    ),
+    tabPanel("Experiment Metadata",
+     h2("Metadata Assigning"),
+     h4("You can input the main data of the experiment here, with the main function dealing with either a Thermal Shift or Drug Response analysis. (Only Drug Response with 8 concentrations works currently) The data file to upload is the main file of data from the initial experiment, commonly going under names of 'proteinGroups_Drug/Compound' as a template example."),
+    fluidRow(
+      column(4, 
+             numericInput("num_drug", "Number of Drugs being Tested", min = 1, step = 1, value = 1),
+             conditionalPanel(
+               condition = 'input.num_drug == 1',
+               column(6, textInput("DrugName1", "Name of The Drug"))),
+             conditionalPanel(
+               condition = 'input.num_drug == 2',
+               column(6, textInput("DrugName21", "Name of The Drug")),
+               column(6, textInput("DrugName22", "Name of The Drug"))),
+             conditionalPanel(
+               condition = 'input.num_drug == 3',
+               column(6, textInput("DrugName31", "Name of The Drug")),
+               column(6, textInput("DrugName32", "Name of The Drug")),
+               column(6, textInput("DrugName33", "Name of The Drug"))),
+             conditionalPanel(
+               condition = 'input.num_drug == 4',
+               column(6, textInput("DrugName41", "Name of The Drug")),
+               column(6, textInput("DrugName42", "Name of The Drug")),
+               column(6, textInput("DrugName43", "Name of The Drug")),
+               column(6, textInput("DrugName44", "Name of The Drug"))),
+             conditionalPanel(
+               condition = 'input.num_drug == 5',
+               column(6, textInput("DrugName51", "Name of The Drug")),
+               column(6, textInput("DrugName52", "Name of The Drug")),
+               column(6, textInput("DrugName53", "Name of The Drug")),
+               column(6, textInput("DrugName54", "Name of The Drug")),
+               column(6, textInput("DrugName55", "Name of The Drug"))),
+             textInput("InChIKey", "International Chemical Identifier of The Drug (InChIKey)"),
+             textInput('doneby', "Performer of Test"),
+             selectizeInput('experiment_type', 'Type of Experiment', choices = experiment_choices),
+             ),
+   # ),
+    
+    #fluidRow(
+    #  conditionalPanel(
+    #    condition = 'input.num_drug == 1',
+    #    column(6, textInput("DrugName1", "Name of The Drug"))),
+    #  conditionalPanel(
+     #   condition = 'input.num_drug == 2',
+     #   column(6, textInput("DrugName21", "Name of The Drug")),
+    #    column(6, textInput("DrugName22", "Name of The Drug"))),
+    #  conditionalPanel(
+    #    condition = 'input.num_drug == 3',
+    #    column(6, textInput("DrugName31", "Name of The Drug")),
+    #    column(6, textInput("DrugName32", "Name of The Drug")),
+    #    column(6, textInput("DrugName33", "Name of The Drug"))),
+    #  conditionalPanel(
+    #    condition = 'input.num_drug == 4',
+    #    column(6, textInput("DrugName41", "Name of The Drug")),
+    #    column(6, textInput("DrugName42", "Name of The Drug")),
+    #    column(6, textInput("DrugName43", "Name of The Drug")),
+    #    column(6, textInput("DrugName44", "Name of The Drug"))),
+    #  conditionalPanel(
+    #    condition = 'input.num_drug == 5',
+     #   column(6, textInput("DrugName51", "Name of The Drug")),
+    #    column(6, textInput("DrugName52", "Name of The Drug")),
+    #    column(6, textInput("DrugName53", "Name of The Drug")),
+   #     column(6, textInput("DrugName54", "Name of The Drug")),
+  #      column(6, textInput("DrugName55", "Name of The Drug"))),
+  #    column(6, textInput("InChIKey", "International Chemical Identifier of The Drug (InChIKey)"))
+   # ),
+    
+    #fluidRow(
+    #  column(6, textInput('doneby', "Performer of Test")
+    #         )),
+    
+    #  selectizeInput(
+    #   'experiment_type', 'Type of Experiment', choices = experiment_choices
+    # ),
+  
+     # fluidRow(
+  column(4,
+        selectizeInput(
+        'process_id', 'Type of Process', choices = process_choices,
+        options = list(
+          placeholder = 'Enter the Type of Process')
+    ),
+    conditionalPanel("Number of Temperautre Values",
+      condition = 'input.process_id == "Thermal Shift"',
+    numericInput("TempNumber", label = NULL, value = NULL)),
+    
+    conditionalPanel("Number of Concentration Values",
+      condition = 'input.process_id == "Drug Response"',
+    numericInput("ConcNumber", label = NULL, value = NULL),
+    selectizeInput("conc_unit", "Units of Concentrations", choices = conc_unit_choices)
+    ),
+    #),
+    
+    conditionalPanel("Temperature Values (Â°C)",
+      condition = 'input.process_id == "Thermal Shift"',
+      fluidRow(
+        column(4, numericInput("Temp1", label = NULL, value = NULL),
+               #),
+        #column(6, 
+               numericInput("Temp2", label = NULL, value = NULL),
+               #),
+        #column(6, 
+               numericInput("Temp3", label = NULL, value = NULL),
+               #),
+        #column(6, 
+               numericInput("Temp4", label = NULL, value = NULL),
+               #),
+        #column(6, 
+               numericInput("Temp5", label = NULL, value = NULL),
+               ),
+        column(4, numericInput("Temp6", label = NULL, value = NULL),
+               #),
+        #column(6, 
+               numericInput("Temp7", label = NULL, value = NULL),
+               #),
+        #column(6, 
+               numericInput("Temp8", label = NULL, value = NULL),
+               #),
+        #column(6, 
+               numericInput("Temp9", label = NULL, value = NULL),
+               #),
+        #column(6, 
+               numericInput("Temp10", label = NULL, value = NULL),
+               ),
+      ),
+    ),
+    
+    conditionalPanel("Concentration Range",
+      condition = 'input.process_id == "Drug Response"',
+      fluidRow(
+        column(4, numericInput("conc1", label = NULL, value = NULL),
+               #),
+        #column(6, 
+               numericInput("conc2", label = NULL, value = NULL),
+        #),
+        #column(6, 
+               numericInput("conc3", label = NULL, value = NULL),
+     # ),
+        #column(6, 
+               numericInput("conc4", label = NULL, value = NULL),
+   # ),
+        #column(6, 
+               numericInput("conc5", label = NULL, value = NULL),
+    ),
+        column(4, numericInput("conc6", label = NULL, value = NULL),
+               #),
+        #column(6, 
+               numericInput("conc7", label = NULL, value = NULL),
+   #),
+        #column(6, 
+               numericInput("conc8", label = NULL, value = NULL),
+   #),
+        #column(6, 
+               numericInput("conc9", label = NULL, value = NULL),
+   #),
+        #column(6, 
+               numericInput("conc10", label = NULL, value = NULL),
+   )
+      ),
+    ),
+   
+   conditionalPanel(
+                    condition = 'input.process_id == "Single Sample Analysis"',
+                    selectizeInput("ssa_unit", "Units of Concentrations", choices = conc_unit_choices)
+   ),
+   
+   conditionalPanel("Concentration Range",
+                    condition = 'input.process_id == "Single Sample Analysis"',
+                    fluidRow(
+                      column(4, numericInput("ssa1", label = NULL, value = NULL),
+                             #),
+                             #column(6, 
+                             numericInput("ssa2", label = NULL, value = NULL),
+                             #),
+                             #column(6, 
+                             numericInput("ssa3", label = NULL, value = NULL),
+                             # ),
+                             #column(6, 
+                             numericInput("ssa4", label = NULL, value = NULL),
+                             # ),
+                             #column(6, 
+                             numericInput("ssa5", label = NULL, value = NULL),
+                      ),
+                      column(4, numericInput("ssa6", label = NULL, value = NULL),
+                             #),
+                             #column(6, 
+                             numericInput("ssa7", label = NULL, value = NULL),
+                             #),
+                             #column(6, 
+                             numericInput("ssa8", label = NULL, value = NULL),
+                             #),
+                             #column(6, 
+                             numericInput("ssa9", label = NULL, value = NULL),
+                             #),
+                             #column(6, 
+                             numericInput("ssa10", label = NULL, value = NULL),
+                      )
+                    ),
+   ),
+  ),
+    #),
+    #textInput("organism", "Name of Organism, Species, Cell Line, Tissue, or Strain ID"),
+    #fluidRow(
+      column(4, textInput("organism", "Name of Organism, Species, Cell Line, Tissue, or Strain ID"),
+                dateInput("run_date", "Date of the Experiment", format = "dd-mm-yyyy", startview = "month", weekstart = 0, language = "en", autoclose = TRUE, datesdisabled = NULL, daysofweekdisabled = NULL),
+                numericInput("num_samples", "Number of Samples", min = 1, step = 1, value = 1), uiOutput("numsamp"),
+      #),
+      #column(6, 
+             numericInput("control_rep", "Number of Control/Vehicle Replicants", min = 0, step = 1, value = 0),
+                numericInput("num_replicates", "Number of Experimental Replicants", min = 0, step = 1, value = 0),
+      ),
+    ),
+      #),
+    fileInput("file1", "Choose Data File",
+              accept = c(
+                "text/csv",
+                "text/comma-seperated-values, text/plain",
+                ".csv")
+    ),
+    #actionButton("process", "Process Data"),
+    verbatimTextOutput("list"),
+    textOutput("print")
+    
+
+  ),
+  
+  
+tabPanel("Data",
+    h2("Selecting Data"),
+    h4("Here you can select columns of data that you'd wish to analyze from the uploaded file from the Experiment Metadata step. Commonly, all of the Reporter Intensity Corrected columns are selected for full analysis of the data."),
+    fluidRow(
+      verbatimTextOutput("display")
+    ),     
+              
+    fluidRow(
+      helpText("Please Select which Data you would like to Analyize"),
+           box(dataTableOutput("select"),
+               width = 12,
+               editable = "cell"),
+           box(dataTableOutput("selected_plus"),
+               width = 12)
+         ),
+    
+    fluidRow(
+      box(tableOutput("temp_table"),
+          width = 12)
+    ),
+    
+    
+),
+
+tabPanel("Analysis",
+         h2("Method of analyzing data"),
+         h4("Here you can choose how to analyze the data inputed and selected in previous steps, being a more full scale analysis of Thermal Shift with Melting Curve, or with a Drug Response. (As said before only drug response really works currently) Uploading a list of proteins that you find to be targets for this analysis can be done here, and selecting an analysis for selected genes will produce the analysis results for those pre-selected proteins and genes. (Not fully operational yet)"),
+         #actionButton("meltingcurve", "Analyze Melting Curve"),
+         #tableOutput("TR_CCR_config"),
+         actionButton("TR_data", "Analyze Melting Curve"),
+         actionButton("CCR_data", "Analyze Drug Response"),
+         actionButton("SSA_data", "Analyze Single Sample Analysis"),
+         fluidRow(
+           fileInput("filetarget", "Choose Protein Target File",
+                     accept=c(
+                       "text/csv",
+                       "text/comma-seperated-values, text/plain",
+                       ".csv"
+                     )
+           )
+         ),
+         conditionalPanel("Concentration Range",
+                          condition = 'input.process_id == "Drug Response"',
+         fluidRow(
+           #downloadButton("downloadCurves", "Download Dose Response Curves"),
+           actionButton("generate_ccr", "Generate PDF of Concentration Curve Response"),
+         )
+         ),
+         conditionalPanel("Temperature Analysis",
+                          condition = 'input.process_id == "Thermal Shift"',
+          fluidRow(
+           actionButton("generate_tr", "Generate PDF of Melting Curve Response")
+         )
+         ),
+         uiOutput("pdfview"),
+         actionButton("TR_Selected_data", "Analyze Melting Curve Selected Genes"),
+         actionButton("CR_Selected_data", "Analyze Drug Response Curve Selected Genes"),
+         #verbatimTextOutput("console_text")
+         h4("Using the Analyzing Drug Response process will produce a table below of registered protein hits from the analysis. Clicking on any of the listed proteins will create a pop-up of the Dose Response Curve for that protein from the analysis to view."),
+         fluidRow(
+           helpText("Passed Data"),
+           box(dataTableOutput("passed_data_ccr"),
+               width = 10,
+               editable = "cell"),
+           box(dataTableOutput("passed_data_tr"),
+               width = 10,
+               editable = "cell"),
+           downloadButton("dwnld_passed", "Download Passed Proteins List"),
+         )
+         ),
+
+tabPanel("Results / Query Data",
+         h2("How to upload and download data"),
+         h4("Here you can select to upload a generated datafile based on the results of the analysis previously to the backend where it will be stored under the previously selected project. As well, a portion of the data uploaded will also be displayed below for you to make sure the data seems well and good. You also have the ability to download a portion of the results of the analysis corresponding to a list of expected targets/kineases incase the results of those targets specifically is what you were looking for."),
+         fileInput("file2", "Choose Data File",
+                   accept = c(
+                     "text/csv",
+                     "text/comma-seperated-values, text/plain",
+                     ".csv",
+                     ".xlsx"),
+         ),
+         actionButton("UploadData", "Upload Generated Datafile"),
+         actionButton("ExpectedData", "Extract Data for Expected Targets/Kinases"),
+fluidRow(
+  helpText("Uploaded Data"),
+         box(dataTableOutput("formatted_upload_data"),
+             width = 12,
+             editable = "cell"),
+fluidRow(
+  helpText("Single Sample Analysis Volcano Plots"),
+  plotOutput("ssa_volcano"),
+)
+  #actionButton("Print", "Print")
+  ),
+)
+#verbatimTextOutput("console_text"),
+         
+
+)))
+
+
+
+server <- function(input, output, session) {
+  #observeEvent(input$Print, {
+    #print(getwd())
+    #file <- "drCurve_BTF3.pdf"
+    #print(list.files(()))
+  #})
+  
+  #observeEvent(input$go, {
+  #  shinyjs::html("text", "")
+  #  y <- printText()
+  #})
+
+  observeEvent(input$authenticate, {
+    cred <- get.user.token(input$username, input$password)
+    print(cred$status)
+  })
+  
+  observeEvent(input$ab_login_button_basic, {
+    authen <-get.user.token(input$ti_user_name_basic,input$ti_password_basic)
+    print(authen$status)
+    removeModal()
+  })
+
+  observeEvent(input$hidetab, {
+    hideTab(inputId = "tabs", target = "Experiment Metadata")
+  })
+  
+  user_base_basic_tbl <- tibble(
+    user_name = "firstuser",
+    password  = "firstpass1"
+  )
+  validate_password_basic <- eventReactive(input$ab_login_button_basic, {
+    
+    validate <- FALSE
+    
+    #if (input$ti_user_name_basic != user_base_basic_tbl$user_name &&
+    #    input$ti_password_basic != user_base_basic_tbl$password) 
+    #    {validate <- FALSE}
+    
+    authen <-get.user.token(input$ti_user_name_basic,input$ti_password_basic)
+    
+    if (authen$status == "ok")
+    {validate <- TRUE}
+    
+    #if (input$ti_user_name_basic == user_base_basic_tbl$user_name &&
+    #    input$ti_password_basic == user_base_basic_tbl$password) 
+    #    {validate <- TRUE}
+  })
+  validate_password_basic_not <- eventReactive(input$ab_login_button_basic, {
+    
+    validate <- FALSE
+    
+    authen <-get.user.token(input$ti_user_name_basic,input$ti_password_basic)
+    
+    if (authen$status == "error")
+    {validate <- TRUE}
+    
+    #if (input$ti_user_name_basic != user_base_basic_tbl$user_name &&
+    #    input$ti_password_basic != user_base_basic_tbl$password) 
+    #    {validate <- TRUE}
+    #else if (input$ti_user_name_basic == user_base_basic_tbl$user_name &&
+    #    input$ti_password_basic != user_base_basic_tbl$password)
+    #    {validate <- TRUE}
+    #else if (input$ti_user_name_basic != user_base_basic_tbl$user_name &&
+    #    input$ti_password_basic == user_base_basic_tbl$password)
+    #    {validate <- TRUE}
+  })
+  output$display_content_basic_not <- renderUI({
+    req(validate_password_basic_not())
+    div(
+      class = "failure",
+      id = "failure_basic",
+      h4 = ("Access denied"),
+      p("The password and/or username is incorrect")
+    )
+  })
+  # hide form 
+  observeEvent(validate_password_basic(), {
+    shinyjs::hide(id = "login-basic")
+  })
+  # show app 
+  output$display_content_basic <- renderUI({
+    
+    req(validate_password_basic())
+    print(isTRUEorFALSE(validate_password_basic))
+    div(
+      class = "bg-success",
+      id = "success_basic",
+      h4("Access confirmed!"),
+      p("Welcome to your basically-secured application!"),
+      modalButton("Dismiss")
+      #footer = modalButton("Dismiss")
+    )
+    
+  })
+
+  credentials <- shinyauthr::loginServer(
+    id="login",
+    data = user_base,
+    user_col = user,
+    pwd_col = password,
+    sodium_hashed = TRUE
+  )
+  
+  myfunction <- function(x) { 
+    for(i in 1:x) cat(i)
+    return(x)
+  }
+  
+  values <- reactiveValues()
+  
+  queryMagic <- function() {
+    print("Warning")
+    
+    return("Data")
+  }
+  
+  #output$console_text <- renderPrint(result <- myfunction(20))
+  #output$console_text <- renderPrint({
+  #  logText()
+  #  return(print(values[["log"]]))
+    # You could also use grep("Warning", values[["log"]]) to get warning messages and use shinyBS package
+    # to create alert message
+  #})
+
+  observeEvent(input$UploadData, {
+   # withCallingHandlers(
+  #  output$console_text <- renderPrint(
+#"fpp"
+      #creating experiment annotation data.frame to get p values
+      #inFile <- input$file1,
+      #if (is.null(inFile))
+      #  return(NULL),
+      #datafile <- read.table(inFile$datapath, sep = "\t", stringsAsFactors = FALSE, header = TRUE),
+      #datafile$Gene.names<-lapply(strsplit(as.character(datafile$Gene.names),";"),"[",1),
+      #tokeep <- grep(pattern = "^Reporter.intensity.corrected", colnames(datafile), value = TRUE),
+      #Filtered.df <- datafile[, tokeep],
+      #clist <- (colnames(Filtered.df)),
+       #print(clist)
+      #colname_list <- as.data.frame(clist),
+       #print(colname_list)
+      #Drugname11 <- (paste0(input$DrugName1, "_1")),
+      #Drugname12 <- (paste0(input$DrugName1, "_2")),
+      #selectedDrug_1 <- grep(pattern = Drugname11, clist, value = TRUE),
+       #print(selectedDrug_1)
+      #replicate_1_df <- as.data.frame(selectedDrug_1),
+       #print(replicate_1_df)
+      #selectedDrug_2 <- grep(pattern = Drugname12, clist, value = TRUE),
+       #print(selectedDrug_2)
+      #replicate_2_df <- as.data.frame(selectedDrug_2),
+       #print(replicate_2_df)
+      #drugvalues <- c(input$conc1,input$conc2,input$conc3,input$conc4,input$conc5,input$conc6,input$conc7,input$conc8,input$conc9,input$conc10),
+      #drugvalues <- na.omit(drugvalues),
+      #drugvalues <- drugvalues[order(drugvalues, decreasing = TRUE)],
+       #print(drugvalues)
+      #rep1 <- c(1),
+      #rep2 <- c(2),
+      #compound <- c("A"),
+      #annotation_rep1 <- data.frame(compound, rep1, drugvalues, replicate_1_df),
+      #colnames(annotation_rep1) <- c("Compound", "Replicate", "Concentration (uM)", "Intensity.Header"),
+       #print(annotation_rep1)
+      #annotation_rep2 <- data.frame(compound, rep2, drugvalues, replicate_2_df),
+      #colnames(annotation_rep2) <- c("Compound", "Replicate", "Concentration (uM)", "Intensity.Header"),
+       #print(annotation_rep2)
+      #ExperimentAnnotation <- rbind(annotation_rep1, annotation_rep2),
+       #print(ExperimentAnnotation)
+      #proteinGroups <- datafile,
+      #proteinGroups <- proteinGroups[-c(1:6,8:20)],
+      #proteinGroups <- proteinGroups[-c(34:100)],
+      #proteinGroups <- proteinGroups[-c(18:100)],
+       #print(proteinGroups)
+      #proteinGroups$Gene.names <-  make.names(proteinGroups$Gene.names, unique=TRUE),
+      #proteinGroups <- proteinGroups %>% remove_rownames %>% column_to_rownames(var = "Gene.names"),
+      #ExperimentAnnotation <- ExperimentAnnotation %>% remove_rownames %>% column_to_rownames(v="Intensity.Header"),
+      #all(rownames(ExperimentAnnotation) == colnames(proteinGroups)),
+      #dds <- DESeqDataSetFromMatrix(countData = round(proteinGroups),colData = ExperimentAnnotation, design = ~Replicate),
+      #dds <- DESeq(dds),
+      #res<- results(dds)
+  # )
+#)
+})
+  
+  #logText <- reactive({
+  #  values[["log"]] <- capture.output(data <- queryMagic())
+  #})
+  #observeEvent(input$authenticate, {
+  #  authen <-get.user.token(input$username,input$password)
+  #  print(authen$status)
+  #})
+  
+  #projectlist <- eventReactive(input$listproject, {
+    #authen <- get.user.token(input$username,input$password)
+    #if ((authen$status) == "error")
+    #  return(NULL)
+    #if (authen$status == "ok")
+    #  return(p=list.projects())
+    #p=list.projects()
+    #p<-grep(pattern= "data.name", colnames(p))
+    #p<-as.data.frame(p)
+  #})
+  
+  observeEvent(input$listproject, {
+    un_data_ed <- list.projects()$data 
+    datalist <- list()
+    for (x in 1:(length((list.projects())$data))) {
+      entry <- un_data_ed[[x]]
+      name <- entry$name
+      datalist[[x]] <- name
+    }
+    project_name_list <- do.call(rbind, datalist)
+    project_name_list <- project_name_list[complete.cases(project_name_list), ]
+    project_name_list <- data.frame(project_name_list)
+    output$projecttable <- renderDataTable(project_name_list, options = list(buttons = c('csv','excel')))
+    print(getwd())
+    #p <- data.frame(list.projects())
+  })
+  #output$projecttable <- renderDataTable({
+   # projectlist()
+    #header <- grep(pattern = "data.name", colnames(projectlist), value = TRUE)
+    #namefilter <- projectlist[, header]
+    #nlist <- as.data.frame(colnames(namefilter))
+  #})
+  
+  #observeEvent(input$listproject, {
+  #  p=list.projects() #list.projects is a list
+  #  print(p)
+  #  plist <- renderDataTable(p)
+  #})
+  
+  observeEvent(input$add_project, {
+    inputproject <- list(name=input$name, lab=input$lab, project_type=input$projecttype)
+    print(inputproject)
+    add.project(inputproject)
+    #p=list.projects()
+    #print(p)
+  })
+  
+  observeEvent(input$process, {
+    #projectid <- 6
+    Temps <- c(input$Temp1, input$Temp2, input$Temp3, input$Temp4, input$Temp5, input$Temp6, input$Temp7, input$Temp8, input$Temp9, input$Temp10)
+    Tempsorder <- Temps[order(Temps, decreasing = TRUE)]
+    Concs <- c(input$conc1, input$conc2, input$conc3, input$conc4, input$conc5, input$conc6, input$conc7, input$conc8, input$conc9, input$conc10)
+    Concsorder <- Concs[order(Concs, decreasing = TRUE)]
+    experiment <- list(projectID=input$projectid, experiment_type=input$experiment_type, done_by=input$doneby, num_samples=input$num_samples, num_replicates=input$num_replicates, assay_type="CETSA", concentration_range=Concsorder, temperature_range=Tempsorder, organism=input$organism, run_date=input$run_date)
+    print(experiment)
+    add.experiment(experiment)
+    #p=list.projects()
+    #list.experiments(p$data[[9]]$projectID)
+    #e=list.experiments()
+    #print(e)
+  })
+  
+  observeEvent(input$UploadData, {
+    withProgress(message = 'Analyzing Data', value = 0, {
+      for (i in 1:1) {
+        #incProgress(1/10)
+        #Sys.sleep(0.1)
+      #}
+      #Sys.sleep(0.1)
+    #})
+        print(1)
+    Temps <- c(input$Temp1, input$Temp2, input$Temp3, input$Temp4, input$Temp5, input$Temp6, input$Temp7, input$Temp8, input$Temp9, input$Temp10)
+    Temps <- na.omit(Temps)
+    Tempsorder <- Temps[order(Temps, decreasing = TRUE)]
+    #print(is.vector(Tempsorder))
+    Tempsorder2 <- paste(Tempsorder, collapse = ",")
+    #print(is.vector(Tempsorder))
+    Concs <- c(input$conc1, input$conc2, input$conc3, input$conc4, input$conc5, input$conc6, input$conc7, input$conc8, input$conc9, input$conc10)
+    Concs <- na.omit(Concs)
+    Concsorder <- Concs[order(Concs, decreasing = TRUE)]
+    Concsorder2 <- paste(Concsorder, collapse = ",")
+    #print(Concsorder)
+    print(2)
+    #resultPath = paste0(getwd(),"/Analysis")
+    #resultPath = file.path(getwd())
+    #resultPath = file.path(Sys.getenv("USERPROFILE"),"Desktop")
+    #resultdata <- read_excel(path.expand("~"), "Desktop\\results_TPP_CCR.xlsx")
+    if (input$process_id == "Thermal Shift") {
+      pull_path <- paste0(getwd(), "Analysis/results_TPP_TR.xlsx") 
+    }
+    if (input$process_id == "Drug Response") {
+    pull_path <- paste0(getwd(), "/Analysis/results_TPP_CCR.xlsx")
+    }
+    #pull_path <- paste0((Sys.getenv("USERPROFILE")), "\\Desktop\\Analysis\\results_TPP_CCR.xlsx")
+    resultdata <- read_excel(pull_path)
+    #resultdata <- read_excel("C:/Users/dbgec/Desktop/Analysis/results_TPP_CCR.xlsx")
+    ##excel <- input$file2
+    ##if (is.null(excel))
+    ##  return(NULL)
+    #print(inFile)
+    #print(inFile$datapath)
+    ##resultdata <- read_excel(excel$datapath) 
+                             #sep = "\t", stringsAsFactors = FALSE, header = TRUE)
+    #print(resultdata)
+    A1_fold_change=sapply(1:nrow(resultdata),FUN = function(i)paste0(round(resultdata[i,grep("transformed_Compound_A_1",names(resultdata),value = T)],3),collaps=","))
+    #print(A1_fold_change)
+    
+    #max_x <- Tempsorder[1]     #Conditional needed to switch to Conc
+    #min_x <- Tempsorder[8]     #Maybe F loop to get last one as lowest value
+   ## if (input$process_id == "Drug Response") {
+  ##  ccr_targets1 <- subset(CCRresults, passed_filter_Compound_A_1)$Protein_ID
+    #print(ccr_targets1)
+  ##  ccr_targets2 <- subset(CCRresults, passed_filter_Compound_A_2)$Protein_ID
+    #print(ccr_targets2)
+  ##  ccr_targets <- intersect(ccr_targets1,ccr_targets2)
+    #print(ccr_targets)
+  ##  Proteins_That_Passed_The_Filtering <- ccr_targets
+  ##  }
+    #ccr_targets_df <- data.frame(Proteins_That_Passed_The_Filtering)
+    #output$passed_data_ccr <- renderDataTable({ccr_targets_df}, rownames=FALSE)
+    
+    pass_filter <- grep(pattern = "^passed_filter_|Protein_ID", colnames(resultdata), value = TRUE)
+    passed_data <- resultdata[, pass_filter]
+    passed_data <- as.data.frame(passed_data)
+    print(passed_data)
+    colnames(passed_data) <- c("Protein_ID", "a", "b")
+    filter_1 <- passed_data %>% filter(a == "Yes")
+    print(filter_1)
+    filter_2 <- filter_1 %>% filter(b == "Yes")
+    print(filter_2)
+    gene_filter <- filter_2[, "Protein_ID"]
+    print(gene_filter)
+    #resultdata <- as.data.frame(resultdata)
+    pass <- resultdata %>% filter(Protein_ID == gene_filter) #[gene_filter, ]
+    print(pass)
+    p <- resultdata[filter_2, ]
+    #print(p)
+    passed_data_1 <- passed_data["Yes", ]
+    #print(passed_data_1)
+    passed_pattern1 <- paste0("passed_filter_", input$DrugName1, "_1")
+    passed_filter_1 <- grep(pattern = passed_pattern1, colnames(resultdata), value = T)
+    passed_column_1 <- resultdata[ ,passed_filter_1]
+    #resultdata_passed_1 <- resultdata[grepl("Yes", resultdata$passed_filter_Compound_A_1),]
+    resultdata_passed_1 <- resultdata %>% filter(passed_filter_Compound_A_1 == "Yes")
+    #print(resultdata_passed_1)
+    resultdata_passed_2 <- resultdata_passed_1 %>% filter(passed_filter_Compound_A_2 == "Yes")
+    print(resultdata_passed_2)
+    
+    protein_ID_filter <- grep(pattern = "Protein_ID", colnames(resultdata_passed_2), value = T)
+    protein_ID_full <- resultdata_passed_2[ ,protein_ID_filter]
+    #print(protein_ID_full)
+    
+    ##for (x in protein_ID_full) {
+    ##protein_ID <- protein_ID_full[x]
+    ##main_path <- Sys.getenv("USERPROFILE")
+    ##specific_path <- paste0(main_path, "\\Desktop\\DrugCurve\\DoseResponse_Curves\\", protein_ID, ".pdf")
+    #scan() function might be the way
+    
+    ##}
+    ##clicked_cell <- input$passed_data_cell_clicked
+    ##value <- clicked_cell$value
+    ##drug_curve_file <- paste0("drCurve_", value, ".pdf")
+    #print(value)
+    #print(drug_curve_file)
+    ##main_path <- Sys.getenv("USERPROFILE")
+    ##specific_path <- paste0(main_path, "\\Desktop\\DrugCurve\\DoseResponse_Curves\\", drug_curve_file)
+    #print(specific_path)
+    ##if (!is.null(value)) {
+    ##  shell.exec(specific_path)
+    
+    
+    #replicate 1 portion
+    fold_change_pattern1 <- paste0("transformed_", input$DrugName1, "_1")
+    fold_change_filter1 <- grep(pattern = fold_change_pattern1, colnames(resultdata_passed_2), value = T)
+    fold_change_columns_1 <- resultdata_passed_2[ ,fold_change_filter1]
+    colnames(fold_change_columns_1) <- c("x1","x2","x3","x4","x5","x6","x7","x8")
+    fold_change_1 <- paste(fold_change_columns_1$x1,fold_change_columns_1$x2,fold_change_columns_1$x3,fold_change_columns_1$x4,fold_change_columns_1$x5,fold_change_columns_1$x6,fold_change_columns_1$x7,fold_change_columns_1$x8, sep=",")
+    pECpattern1 <- paste0("pEC50_", input$DrugName1, "_1")
+    pEC50filter1 <- grep(pattern = pECpattern1, colnames(resultdata_passed_2), value = T)
+    pEC50_1 <- resultdata_passed_2[ ,pEC50filter1]
+    slopepattern1 <- paste0("slope_", input$DrugName1, "_1")
+    slopefilter1 <- grep(pattern = slopepattern1, colnames(resultdata_passed_2), value = T)
+    slope1 <- resultdata_passed_2[ ,slopefilter1]
+    
+    #replicate 2 portion
+    fold_change_pattern2 <- paste0("transformed_", input$DrugName1, "_2")
+    fold_change_filter2 <- grep(pattern = fold_change_pattern2, colnames(resultdata_passed_2), value = T)
+    fold_change_columns_2 <- resultdata_passed_2[ ,fold_change_filter2]
+    colnames(fold_change_columns_2) <- c("x1","x2","x3","x4","x5","x6","x7","x8")
+    fold_change_2 <- paste(fold_change_columns_2$x1,fold_change_columns_2$x2,fold_change_columns_2$x3,fold_change_columns_2$x4,fold_change_columns_2$x5,fold_change_columns_2$x6,fold_change_columns_2$x7,fold_change_columns_2$x8, sep=",")
+    pECpattern2 <- paste0("pEC50_", input$DrugName1, "_2")
+    pEC50filter2 <- grep(pattern = pECpattern2, colnames(resultdata_passed_2), value = T)
+    pEC50_2 <- resultdata_passed_2[ ,pEC50filter2]
+    slopepattern2 <- paste0("slope_", input$DrugName1, "_2")
+    slopefilter2 <- grep(pattern = slopepattern2, colnames(resultdata_passed_2), value = T)
+    slope2 <- resultdata_passed_2[ ,slopefilter2]
+    
+    #creating experiment annotation data.frame to get p values
+    inFile <- input$file1
+    if (is.null(inFile))
+      return(NULL)
+    #print(inFile)
+    #print(inFile$datapath)
+    datafile <- read.table(inFile$datapath, sep = "\t", stringsAsFactors = FALSE, header = TRUE)
+    datafile$Gene.names<-lapply(strsplit(as.character(datafile$Gene.names),";"),"[",1)
+    tokeep <- grep(pattern = "^Reporter.intensity.corrected", colnames(datafile), value = TRUE)
+    Filtered.df <- datafile[, tokeep]
+    clist <- (colnames(Filtered.df))
+    #print(clist)
+    colname_list <- as.data.frame(clist)
+    #print(colname_list)
+    Drugname11 <- (paste0(input$DrugName1, "_1"))
+    Drugname12 <- (paste0(input$DrugName1, "_2"))
+    selectedDrug_1 <- grep(pattern = Drugname11, clist, value = TRUE)
+    #print(selectedDrug_1)
+    replicate_1_df <- as.data.frame(selectedDrug_1)
+    #print(replicate_1_df)
+    selectedDrug_2 <- grep(pattern = Drugname12, clist, value = TRUE)
+    #print(selectedDrug_2)
+    replicate_2_df <- as.data.frame(selectedDrug_2)
+    #print(replicate_2_df)
+    drugvalues <- c(input$conc1,input$conc2,input$conc3,input$conc4,input$conc5,input$conc6,input$conc7,input$conc8,input$conc9,input$conc10)
+    drugvalues <- na.omit(drugvalues)
+    drugvalues <- drugvalues[order(drugvalues, decreasing = TRUE)]
+    #print(drugvalues)
+    rep1 <- c(1)
+    rep2 <- c(2)
+    compound <- c("A")
+    annotation_rep1 <- data.frame(compound, rep1, drugvalues, replicate_1_df)
+    colnames(annotation_rep1) <- c("Compound", "Replicate", "Concentration (uM)", "Intensity.Header")
+    #print(annotation_rep1)
+    annotation_rep2 <- data.frame(compound, rep2, drugvalues, replicate_2_df)
+    colnames(annotation_rep2) <- c("Compound", "Replicate", "Concentration (uM)", "Intensity.Header")
+    #print(annotation_rep2)
+    ExperimentAnnotation <- rbind(annotation_rep1, annotation_rep2)
+    #print(ExperimentAnnotation)
+    tokeep <- grep(pattern = "^Reporter.intensity.corrected|Gene.names", colnames(datafile), value = TRUE)
+    proteinGroups <- datafile[, tokeep]
+    #print(proteinGroups)
+    #proteinGroups1 <- datafile
+    #proteinGroups1 <- proteinGroups[-c(1:6,8:20)]
+    #proteinGroups1 <- proteinGroups[-c(34:100)]
+    #proteinGroups1 <- proteinGroups[-c(18:100)]
+    #print(proteinGroups1)
+    proteinGroups$Gene.names <-  make.names(proteinGroups$Gene.names, unique=TRUE)
+    proteinGroups <- proteinGroups %>% remove_rownames %>% column_to_rownames(var = "Gene.names")
+    ExperimentAnnotation <- ExperimentAnnotation %>% remove_rownames %>% column_to_rownames(v="Intensity.Header")
+    all(rownames(ExperimentAnnotation) == colnames(proteinGroups))
+    dds <- DESeqDataSetFromMatrix(countData = round(proteinGroups),colData = ExperimentAnnotation, design = ~Replicate)
+    dds <- DESeq(dds)
+    res<- results(dds)
+    gene_name_list <- protein_ID_full %>% pull('Protein_ID')
+    #print(gene_name_list)
+    #print(length(gene_name_list))
+    subset_res <- subset(res, rownames(res) %in% gene_name_list)
+    ordered_res <- list()
+    for (x in 1:(length(gene_name_list))) {
+      gn <- gene_name_list[x]
+      single <- subset(subset_res, rownames(subset_res) %in% gn)
+      ordered_res[[x]] <- single
+    }
+    comb_res <- do.call(rbind, ordered_res)
+    #print(subset_res)
+    #print(comb_res)
+    pvalue_column <- comb_res[,5]
+    #print(pvalue_column)
+    for (x in 1:30) {
+      #print(subset_res[x,])
+    }
+    print(4)
+    inchikey <- c(input$InChIKey)
+    drugbanksID <- c(input$InChIKey) #NEEDS TO CHANGE
+    if (input$process_id == "Drug Response") {
+    range <- log10(as.numeric(as.character(Concsorder)) * 10^-6)
+    print(range)
+    range[is.infinite(range)] <- -15
+    range1 <- range[order(range, decreasing = TRUE)]
+    print(range1)
+    #range2 <- range[order(range, increasing = TRUE)]
+    #print(range2)
+    #min_x <- c(range2[1])
+    min_x <- c(range1[8])
+    max_x <- c(range1[1])
+    }
+    if (input$process_id == "Thermal Shift") {
+      range <- log10(as.numeric(as.character(Tempsorder)) * 10^-6)
+      range[is.infinite(range)] <- -15
+      range1 <- range[order(range, decreasing = TRUE)]
+      range2 <- range[order(range, increasing = TRUE)]
+      mix_x <- c(range2[1])
+      max_x <- c(range1[1])
+    }
+    drug_name <- c(input$DrugName1)
+    
+    results1 <- data.frame(protein_ID_full, drugbanksID, inchikey, drug_name, fold_change_1, rep1, min_x, max_x, pEC50_1, slope1, pvalue_column)
+    #results1 <- results1[complete.cases(results1), ]
+    colnames(results1) <- c("uniprot", "drugbankID", "inchikey", "drug name", "fold_change", "replicate", "min_x", "max_x", "pEC50", "slope", "pvalue")
+    results2 <- data.frame(protein_ID_full, drugbanksID, inchikey, drug_name, fold_change_2, rep2, min_x, max_x, pEC50_2, slope2, pvalue_column)
+    #results2 <- results2[complete.cases(results2), ]
+    colnames(results2) <- c("uniprot", "drugbankID", "inchikey", "drug name", "fold_change", "replicate", "min_x", "max_x", "pEC50", "slope", "pvalue")
+    #print(results1)
+    #print(results2)
+     "proteinID (uniprot)"
+    datalist = list()
+    for (x in 1:(nrow(results1))) {
+      df1 <- results1[x,]
+      df2 <- results2[x,]
+      combineddf <- rbind(df1,df2)
+      datalist[[x]] <- combineddf
+    }
+    #print(datalist)
+    MainResults <- do.call(rbind, datalist)
+    MainResults <- MainResults[complete.cases(MainResults), ] #ENDING RESULTS
+    #print(MainResults)
+    
+    displayed_results1 <- data.frame(protein_ID_full, drugbanksID, inchikey, drug_name, pEC50_1, pvalue_column)
+    colnames(displayed_results1) <- c("uniprot","drugbankID","inchikey","drug name","pEC50","pvalue")
+    displayed_results2 <- data.frame(protein_ID_full, drugbanksID, inchikey, drug_name, pEC50_2, pvalue_column)
+    colnames(displayed_results2) <- c("uniprot","drugbankID","inchikey","drug name","pEC50","pvalue")
+    d_datalist = list()
+    for (x in 1:(nrow(displayed_results1))) {
+      d_df1 <- displayed_results1[x,]
+      d_df2 <- displayed_results2[x,]
+      d_combineddf <- rbind(d_df1,d_df2)
+      d_datalist[[x]] <- d_combineddf
+    }
+    #print(datalist)
+    d_MainResults <- do.call(rbind, d_datalist)
+    d_MainResults <- d_MainResults[complete.cases(d_MainResults), ]
+    
+    output$formatted_upload_data <- renderDataTable(d_MainResults)
+    
+
+    
+    ## Start the workflow
+    #CCRresults <- analyzeTPPCCR(configTable = hdacCCR_config[1,],
+                                #data = hdacCCR_data[[1]],
+                                #resultPath = resultPath,
+                                #plotCurves = FALSE,
+                                #nCores = 2)
+    ## Proteins that display a clear response to treatment
+    #ccr_targets1 <- subset(resultdata, passed_filter_Compound_A_1)$Protein_ID
+    #ccr_targets <- subset(ccr_targets1, passed_filter_Compound_A_2)$Protein_ID
+    #print(ccr_targets)
+    
+    #resultfolders <- c("Targets", "Stringent", "Relaxed")
+    #toplot <-list()
+    #passed.filter.rep1<-paste0("passed_filter_",current_drug, "_1")
+    #passed.filter.rep2 <- paste0("passed_filter_",current_drug,"_2")
+    #compound.effect.rep1 <- paste0("compound_effect_",current_drug,"_1")
+    #compound.effect.rep2 <- paste0("compound_effect_",current_drug,"_2")
+    #stringent_ccr_targets <- subset(CCRresults, CCRresults[,passed.filter.rep1] & CCRresults[,passed.filter.rep2] & CCRresults[,compound.effect.rep1] == CCRresults[,compound.effect.rep2])$Protein_ID
+    #relaxed_ccr_targets <- subset(CCRresults, CCRresults[,passed.filter.rep1] | CCRresults[,passed.filter.rep2] )$Protein_ID
+    #print(stringent_ccr_targets)
+    #print(relaxed_ccr_targets)
+    #print(1)   
+    ## Proteins that display a clear response to treatment
+    #ccr_targets <- subset(CCRresults, passed_filter_Compound_A_1)$Protein_ID   #PASSED_FILTER_CHANGE MAYBE
+    #print(ccr_targets)
+    
+    #Targetfile <- input$filetarget
+    #if (is.null(Targetfile))
+    #  return(NULL)
+    #selectedproteins<-read.table(Targetfile$datapath, header = FALSE,fill=T, sep = "\t",as.is = TRUE, quote=",", stringsAsFactors = FALSE)
+    #print(selectedproteins)
+    #proteinlist<-paste(unlist(selectedproteins), collapse = "|")
+    #print(proteinlist)
+    #toplot <- list("DrugTargets" = selectedproteins$V1)
+    #print(2)
+    #print(toplot)
+    #if (length(stringent_ccr_targets) > 0){
+    #  toplot[["Stringent"]] <- stringent_ccr_targets
+    #}
+    #print(toplot[["stringent"]])
+    #if (length(relaxed_ccr_targets) > 0) {
+    #  toplot[["Relaxed"]] <- relaxed_ccr_targets
+    #}
+    #print(toplot[["relaxed"]])
+    #print(3)
+    ## Drug Targets
+    #drug_targets <- grep(proteinlist, ccr_targets, value = TRUE)
+    #print(drug_targets)
+    
+    ## Individual Steps in the wokrflow
+    #ccrData <- tppccrImport(configTable = Config1, data = CR_data)
+    #print(ccrData)
+    ## Data Normalization
+    #ccrDataNormalized <- tppccrNormalize(data = ccrData)
+    #print(ccrDataNormalized)
+    ## Data Transformation
+    #ccrDataTransformed_1 <- tppccrTransform(data = ccrDataNormalized)[[1]]
+    #ccrDataTransformed_2 <- tppccrTransform(data = ccrDataNormalized)[[2]]
+    #print(ccrDataTransformed_1)
+    #print(ccrDataTransformed_2)
+    
+    #for (j in 1:length(toplot)) {
+      
+    #  resultPath = file.path(getwd(), paste(current_drug,"CCR_normref",names(toplot)[j],format(Sys.time(),'%b_%d_%Y'),sep = "_"))  
+      
+    #  ccr_targets <- toplot[[j]]
+    #  ccrDataRep_1 <- ccrDataTransformed_1[match(ccr_targets, Biobase::featureNames(ccrDataTransformed_1)),]
+    #  ccrDataRep_2 <- ccrDataTransformed_2[match(ccr_targets, Biobase::featureNames(ccrDataTransformed_2)),]
+    #  targetdata <- list(drugrep1 = ccrDataRep_1,drugrep2 = ccrDataRep_2)
+    #  names(targetdata) <- c(paste(current_drug,"1",sep = "_"),paste(current_drug,"2",sep = "_"))
+    #  ccrDataFitted <- tppccrCurveFit(data = targetdata, nCores = "max")
+    #  tppccrPlotCurves(ccrDataFitted, resultPath = resultPath, nCores = "max")
+    
+    ## Drug Targets
+    #hdac_targets <- grep("HDAC", ccr_targets, value = TRUE)
+    #print(hdac_targets)
+    
+    ## Individual Steps in the wokrflow
+    #ccrData <- tppccrImport(configTable = hdacCCR_config[1,], data = hdacCCR_data[[1]])
+    
+    ## Data Normalization
+    #ccrDataNormalized <- tppccrNormalize(data = ccrData)
+    
+    ## Data Transformation
+    #ccrDataTransformed <- tppccrTransform(data = ccrDataNormalized)[[1]]
+    
+    ## Dose Response Curve Fitting
+    #ccrDataHDAC <- ccrDataTransformed[match(hdac_targets, Biobase::featureNames(ccrDataTransformed)),]
+    #ccrDataFittedHDAC <- tppccrCurveFit(data=list(Panobinostat_1 = ccrDataHDAC), nCores = 1)
+    
+    ## Tabular Results
+    #ccrResultsHDAC <- tppccrResultTable(ccrDataFittedHDAC)
+    #print(ccrResultsHDAC[,c(1, 22:25)])
+    
+    project_entry <- input$projecttable_cell_clicked
+    project_entry2 <- input$projecttable_rows_selected
+    projectentry3 <- project_entry$row
+    #print(project_entry)
+    #print(project_entry2)
+    #print(projectentry3)
+    
+    un_data_ed <- list.projects()$data 
+    #datalist <- list()
+    ##for (x in 1:12) {
+      entry <- un_data_ed[[projectentry3]]
+      project_id <- entry$projectID
+      project_id <- as.numeric(project_id)
+      #datalist[[x]] <- name
+    #print(project_id)
+    experiment_results1 <-list(projectID=project_id, experiment_type=input$experiment_type, done_by=input$doneby, num_samples=input$num_samples, num_replicates=input$num_replicates, assay_type="CETSA",temperature_range=Tempsorder2, concentration_range=Concsorder2, organism=input$organism, run_date=input$run_date,results=MainResults)
+  #print(experiment_results1)
+    #saveRDS(experiment_results1, "test_experiment_by_error.RDS")
+#add.experiment(experiment_results1) #Error in fix.by: 'by' must specify a uniquely valid column
+    #results=MainResults
+    #temperature_range=Tempsorder2
+    #Targetfile <- input$filetarget
+    #datalist <- read.table(Targetfile$datapath, sep = "\t", stringsAsFactors = FALSE, header = TRUE)
+    #datalist$Gene.names <- lapply(strsplit(as.character(datalist$Gene.names), ";"), "[",1)
+    #proteinlist <- grep(pattern = "Gene.names", colnames(datalist), value = TRUE)
+    #Protein_datalist <- datalist[, proteinlist]
+    #print(Protein_datalist)
+    #resultproteins <- grep(pattern = "Protein_ID", colnames(resultdata), value = TRUE)
+    #FilteredResultdata <- resultdata[, resultproteins]
+    #print(FilteredResultdata)
+      #file.path(Sys.getenv("USERPROFILE"),"Desktop"
+      #xls=openxlsx::read.xlsx("results_TPP_CCR.xlsx")
+    incProgress(1/1)
+    Sys.sleep(0.1)
+      }
+    })
+  })
+  
+  observeEvent(input$ExpectedData, {
+    Targetfile <- input$filetarget
+    if (is.null(Targetfile))
+      return(NULL)
+    selectedgenes<-read.table(Targetfile$datapath, header = FALSE,fill=T, sep = "\t",as.is = TRUE, quote="\"", stringsAsFactors = F)
+    path1 <- paste0(getwd(),"/Analysis/results_TPP_CCR.xlsx")
+    #path1 <- paste0((Sys.getenv("USERPROFILE")),"\\Desktop\\Analysis\\results_TPP_CCR.xlsx")
+    resultdata <- read_excel(path1)
+    #resultdata <- read_excel("C:\\Users\\dbgec\\Desktop\\results_TPP_CCR.xlsx")
+    print(nrow(selectedgenes))
+    proteinlist = list()
+    for (x in 1:(nrow(selectedgenes))) {
+      protein_target <- selectedgenes[x,]
+      proteinfilter <- filter(resultdata, Protein_ID == protein_target)
+      proteinlist[[x]] <- proteinfilter
+      
+      #protein_filter <- grep(pattern = protein_target, resultdata$Protein_ID)
+      #protein_target_rows <- resultdata[protein_filter, ]
+      #proteinlist[[x]] <- protein_target_rows
+    }
+    #proteinlist <- proteinlist[complete.cases(proteinlist), ]
+    #print(proteinlist)
+    targetlist <- do.call(rbind, proteinlist)
+    print(targetlist)
+    targetlist_df <-  as.data.frame(targetlist)
+    print(targetlist_df)
+    
+    path2 <- paste0(getwd(),"/Expected_Targets.csv")
+    #path2 <- paste0((Sys.getenv("USERPROFILE")), "\\Desktop\\Expected_Targets.csv")
+    write.csv(targetlist_df, path2, row.names = FALSE) #STORED IN FILE FOLDER
+    #write.csv(targetlist_df, "C:\\Users\\dbgec\\Desktop\\Expected_Targets.csv", row.names = FALSE)
+    
+    #passed_pattern1 <- paste0("passed_filter_", input$DrugName1, "_1")
+    #passed_filter_1 <- grep(pattern = passed_pattern1, colnames(targetlist), value = T)
+    #passed_column_1 <- targetlist[ ,passed_filter_1]
+    #resultdata_passed_1 <- resultdata[grepl("Yes", resultdata$passed_filter_Compound_A_1),]
+    #resultdata_passed_1 <- resultdata %>% filter(passed_filter_Compound_A_1 == "Yes")
+    #print(resultdata_passed_1)
+    #resultdata_passed_2 <- resultdata_passed_1 %>% filter(passed_filter_Compound_A_2 == "Yes")
+    #print(resultdata_passed_2)
+    
+    #protein_ID_filter <- grep(pattern = "Protein_ID", colnames(targetlist), value = T)
+    #protein_ID_full <- targetlist[ ,protein_ID_filter]
+    #print(protein_ID_full)
+    
+    #fold_change_pattern1 <- paste0("transformed_", input$DrugName1, "_1")
+    #fold_change_filter1 <- grep(pattern = fold_change_pattern1, colnames(targetlist), value = T)
+    #fold_change_columns_1 <- targetlist[ ,fold_change_filter1]
+    #colnames(fold_change_columns_1) <- c("x1","x2","x3","x4","x5","x6","x7","x8")
+    #fold_change_1 <- paste(fold_change_columns_1$x1,fold_change_columns_1$x2,fold_change_columns_1$x3,fold_change_columns_1$x4,fold_change_columns_1$x5,fold_change_columns_1$x6,fold_change_columns_1$x7,fold_change_columns_1$x8, sep=",")
+    #print(fold_change_1)
+    #pECpattern1 <- paste0("pEC50_", input$DrugName1, "_1")
+    #pEC50filter1 <- grep(pattern = pECpattern1, colnames(targetlist), value = T)
+    #pEC50_1 <- targetlist[ ,pEC50filter1]
+    #print(pEC50_1)
+    #slopepattern1 <- paste0("slope_", input$DrugName1, "_1")
+    #slopefilter1 <- grep(pattern = slopepattern1, colnames(targetlist), value = T)
+    #slope1 <- targetlist[ ,slopefilter1]
+    #print(slope1)
+    
+    #fold_change_pattern2 <- paste0("transformed_", input$DrugName1, "_2")
+    #fold_change_filter2 <- grep(pattern = fold_change_pattern2, colnames(targetlist), value = T)
+    #fold_change_columns_2 <- targetlist[ ,fold_change_filter2]
+    #colnames(fold_change_columns_2) <- c("x1","x2","x3","x4","x5","x6","x7","x8")
+    #fold_change_2 <- paste(fold_change_columns_2$x1,fold_change_columns_2$x2,fold_change_columns_2$x3,fold_change_columns_2$x4,fold_change_columns_2$x5,fold_change_columns_2$x6,fold_change_columns_2$x7,fold_change_columns_2$x8, sep=",")
+    #pECpattern2 <- paste0("pEC50_", input$DrugName1, "_2")
+    #pEC50filter2 <- grep(pattern = pECpattern2, colnames(targetlist), value = T)
+    #pEC50_2 <- targetlist[ ,pEC50filter2]
+    #slopepattern2 <- paste0("slope_", input$DrugName1, "_2")
+    #slopefilter2 <- grep(pattern = slopepattern2, colnames(targetlist), value = T)
+    #slope2 <- targetlist[ ,slopefilter2]
+    
+    #rep1 <- c(1)
+    #rep2 <- c(2)
+    
+    #drugID <- c(input$InChIKey)
+    
+    #results1 <- data.frame(drugID, rep1, protein_ID_full, fold_change_1, pEC50_1, slope1)
+    #results1 <- results1[complete.cases(results1), ]
+    #colnames(results1) <- c("DrugID", "replicate", "proteinID", "fold_change", "pEC50", "slope")
+    #results2 <- data.frame(drugID, rep2, protein_ID_full, fold_change_2, pEC50_2, slope2)
+    #results2 <- results2[complete.cases(results2), ]
+    #colnames(results2) <- c("DrugID", "replicate", "proteinID", "fold_change", "pEC50", "slope")
+    #print(results1)
+    #print(results2)
+    
+    #datalist = list()
+    #for (x in 1:5000) {
+    #  df1 <- results1[x,]
+    #  df2 <- results2[x,]
+    #  combineddf <- rbind(df1,df2)
+    #  datalist[[x]] <- combineddf
+    #}
+    #print(datalist)
+    #MainResults <- do.call(rbind, datalist)
+    #MainResults <- MainResults[complete.cases(MainResults), ]
+    #print(MainResults)
+  })
+  
+  #The Table of Data Selected based on Type of Experiment
+  output$select <- renderDataTable({
+    {
+    inFile <- input$file1
+    
+    if (is.null(inFile))
+      return(NULL)
+    datafile <- read.table(inFile$datapath, sep = "\t", stringsAsFactors = FALSE, header = TRUE)
+    datafile <- datafile[which(datafile$Potential.contaminant != "+"),]
+    datafile <- datafile[which(datafile$Reverse != "+"),]
+    datafile <- datafile[which(datafile$Only.identified.by.site != "+"),]
+    datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),";"),"[",1)
+    datafile$Gene.names<-lapply(strsplit(as.character(datafile$Gene.names),";"),"[",1)
+    #missing_genes<-select(up, keys=unlist(datafile$Protein.IDs[which(is.na(datafile$Gene.names))]), columns=c("GENES"),keytype="UNIPROTKB")
+    #missing_genes$GENES <-lapply(strsplit(as.character(missing_genes$GENES)," "),"[",1)
+    #datafile$Gene.names[which(is.na(datafile$Gene.names))]<-missing_genes$GENES
+    datafile$Gene.names[which(is.na(datafile$Gene.names))]<-datafile$Protein.IDs[which(is.na(datafile$Gene.names))]
+    
+   ############################################################################################################################################################################################################## 
+    #datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),"|"),"[",2)
+    tokeep <- grep(pattern = "^Reporter.intensity.corrected|Unique.peptides|Peptides|Protein.IDs|site|Reverse|Potential", colnames(datafile), value = TRUE)
+    #cat(tokeep)
+    Filtered.df <- datafile[, tokeep]
+    File_Columns <- colnames(Filtered.df)
+    #clist <- as.data.frame(colnames(Filtered.df))
+    clist <- as.data.frame(File_Columns)
+    #clist <- data.frame(colnames(Filtered.df))
+    
+    #print(colnames(tokeep))
+    #df <- read.table(datafile, header = TRUE, sep = "\t", dec = ".")
+    #datafile[, grep(pattern="^Reporter", colnames(datafile))]
+    #if (input$experiment_type == "Label Free") {
+      #datafile[grep("Intensity", datafile$`Protein IDs`)]}
+    #else if (input$experiment_type == "TMT") {
+      #datafile[grep("Reporter", datafile)]}
+    #else if (input$experiment_type == "Di-Methyl") {
+      #datafile[grep("High|Low", datafile$`Protein IDs`)]}
+    }
+    #rownames=FALSE
+  })
+  
+  
+  #The Table of Individually Selected Data from the File
+  selected_data <- renderDataTable({
+    plus <- c(input$select_rows_selected)
+    #plusplus <- plus$`Protein ID`
+    temp_range1 <- input$Temp111
+    temp_range2 <- c(input$Temp211, input$Temp212)
+    temp_range3 <- c(input$Temp311, input$Temp312, input$Temp313)
+    temp_range4 <- c(input$Temp411, input$Temp412, input$Temp413, input$Temp414)
+    temp_range5 <- c(input$Temp511, input$Temp512, input$Temp513, input$Temp514, input$Temp515)
+    temp_range6 <- c(input$Temp611, input$Temp612, input$Temp613, input$Temp614, input$Temp615, input$Temp616)
+    temp_range7 <- c(input$Temp711, input$Temp712, input$Temp713, input$Temp714, input$Temp715, input$Temp716, input$Temp717)
+    temp_range8 <- c(input$Temp811, input$Temp812, input$Temp813, input$Temp814, input$Temp815, input$Temp816, input$Temp817, input$Temp818)
+    temp_range9 <- c(input$Temp911, input$Temp912, input$Temp913, input$Temp914, input$Temp915, input$Temp916, input$Temp917, input$Temp918, input$Temp919)
+    temp_range10 <- c(input$Temp11, input$Temp12, input$Temp13, input$Temp14, input$Temp15, input$Temp16, input$Temp17, input$Temp18, input$Temp19, input$Temp20)
+    conc_range1 <- input$conc111
+    conc_range2 <- c(input$conc211, input$conc212)
+    conc_range3 <- c(input$conc311, input$conc312, input$conc313)
+    conc_range4 <- c(input$conc411, input$conc412, input$conc413, input$conc414)
+    conc_range5 <- c(input$conc511, input$conc512, input$conc513, input$conc514, input$conc515)
+    conc_range6 <- c(input$conc611, input$conc612, input$conc613, input$conc614, input$conc615, input$conc616)
+    conc_range7 <- c(input$conc711, input$conc712, input$conc713, input$conc714, input$conc715, input$conc716, input$conc717)
+    conc_range8 <- c(input$conc811, input$conc812, input$conc813, input$conc814, input$conc815, input$conc816, input$conc817, input$conc818)
+    conc_range9 <- c(input$conc911, input$conc912, input$conc913, input$conc914, input$conc915, input$conc916, input$conc917, input$conc918, input$conc919)
+    conc_range10 <- c(input$conc11, input$conc12, input$conc13, input$conc14, input$conc15, input$conc16, input$conc17, input$conc18, input$conc19, input$conc20)
+    if ((input$process_id == "Thermal Shift") & ((input$TempNumber == 10))) { 
+      data.frame("Protein ID" = plus, "Temperature" = temp_range10)}
+    else if ((input$process_id == "Thermal Shift") & ((input$TempNumber == 9))) { 
+      data.frame("Protein ID" = plus, "Temperature" = temp_range9)}
+    else if ((input$process_id == "Thermal Shift") & ((input$TempNumber == 8))) { 
+      data.frame("Protein ID" = plus, "Temperature" = temp_range8)}
+    else if ((input$process_id == "Thermal Shift") & ((input$TempNumber == 7))) { 
+      data.frame("Protein ID" = plus, "Temperature" = temp_range7)}
+    else if ((input$process_id == "Thermal Shift") & ((input$TempNumber == 6))) { 
+      data.frame("Protein ID" = plus, "Temperature" = temp_range6)}
+    else if ((input$process_id == "Thermal Shift") & ((input$TempNumber == 5))) { 
+      data.frame("Protein ID" = plus, "Temperature" = temp_range5)}
+    else if ((input$process_id == "Thermal Shift") & ((input$TempNumber == 4))) { 
+      data.frame("Protein ID" = plus, "Temperature" = temp_range4)}
+    else if ((input$process_id == "Thermal Shift") & ((input$TempNumber == 3))) { 
+      data.frame("Protein ID" = plus, "Temperature" = temp_range3)}
+    else if ((input$process_id == "Thermal Shift") & ((input$TempNumber == 2))) { 
+      data.frame("Protein ID" = plus, "Temperature" = temp_range2)}
+    else if ((input$process_id == "Thermal Shift") & ((input$TempNumber == 1))) { 
+      data.frame("Protein ID" = plus, "Temperature" = temp_range1)}
+    else if ((input$process_id == "Drug Response") & ((input$ConcNumber == 10))) {
+      data.frame("Protein ID" = plus, "Concentration" = conc_range10)}
+    else if ((input$process_id == "Drug Response") & ((input$ConcNumber == 9))) {
+      data.frame("Protein ID" = plus, "Concentration" = conc_range9)}
+    else if ((input$process_id == "Drug Response") & ((input$ConcNumber == 8))) {
+      data.frame("Protein ID" = plus, "Concentration" = conc_range8)}
+    else if ((input$process_id == "Drug Response") & ((input$ConcNumber == 7))) {
+      data.frame("Protein ID" = plus, "Concentration" = conc_range7)}
+    else if ((input$process_id == "Drug Response") & ((input$ConcNumber == 6))) {
+      data.frame("Protein ID" = plus, "Concentration" = conc_range6)}
+    else if ((input$process_id == "Drug Response") & ((input$ConcNumber == 5))) {
+      data.frame("Protein ID" = plus, "Concentration" = conc_range5)}
+    else if ((input$process_id == "Drug Response") & ((input$ConcNumber == 4))) {
+      data.frame("Protein ID" = plus, "Concentration" = conc_range4)}
+    else if ((input$process_id == "Drug Response") & ((input$ConcNumber == 3))) {
+      data.frame("Protein ID" = plus, "Concentration" = conc_range3)}
+    else if ((input$process_id == "Drug Response") & ((input$ConcNumber == 2))) {
+      data.frame("Protein ID" = plus, "Concentration" = conc_range2)}
+    else if ((input$process_id == "Drug Response") & ((input$ConcNumber == 1))) {
+      data.frame("Protein ID" = plus, "Concentration" = conc_range1)}
+    
+  })
+  
+
+  output$TR_CCR_config <- renderTable({
+    inFile <- (input$file1)
+    if (is.null(inFile))
+      return(NULL)
+    datafile <- read.table(inFile$datapath, sep = "\t", stringsAsFactors = FALSE, header = TRUE)
+    datafile <- datafile[which(datafile$Potential.contaminant != "+"),]
+    datafile <- datafile[which(datafile$Reverse != "+"),]
+    datafile <- datafile[which(datafile$Only.identified.by.site != "+"),]
+    datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),";"),"[",1)
+    #datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),"|"),"[",2)
+    tokeep <- grep(pattern = "^Reporter.intensity.corrected|Unique.peptides|Peptides|Protein.IDs|site|Reverse|Potential", colnames(datafile), value = TRUE)
+    Filtered.df <- datafile[, tokeep]
+    #tokeepcontrol <- grep(pattern = "^Control", colnames(Filtered.df), value =TRUE) #Capitalization might change
+    #controlFiltered.df <- Filtered.df[, tokeepcontrol]
+    clist <- as.data.frame(colnames(Filtered.df))
+    FilteredPlus <- clist[input$select_rows_selected, ]
+    print(FilteredPlus)
+    selectedControl_1 <- grep(pattern = "Control_1", FilteredPlus, value = TRUE)
+    selectedControl_2 <- grep(pattern = "Control_2", FilteredPlus, value = TRUE) #capitalization might change
+    control1values <- lapply(strsplit(as.character(selectedControl_1),"[.]"),"[",4)
+    #print(selectedControl_1)
+    #print(control1values)
+    #FilteredPlusPlus <- sort(FilteredPlus, decreasing = TRUE)
+    plus2 <- c("Experiment", (paste0("rel_fc_", input$select_rows_selected)))
+    plus3 <- c("Experiment", "Condition", "ComparisonVT1", "ComparisonVT2", FilteredPlus)
+    plus4 <- c(FilteredPlus)
+    plus5 <- c("Experiment", "Condition", "ComparisonVT1", "ComparisonVT2")
+    
+    if ((input$TempNumber == 1)) {
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      e <- c(controlvalues[1])
+      df <- data.frame(e)
+      names(df) <- c(plus4)
+      df <- df[order( df[1, ], decreasing = TRUE )]
+      namesdf <- data.frame(a,b,c,d)
+      names(namesdf) <- c(plus5)
+      maindf <- bind_cols(namesdf, df)
+      print(maindf)
+      print(is.data.frame(maindf))
+    }
+    else if ((input$TempNumber == 2)) {
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      #e <- c(input$Temp211, input$Temp211, input$Temp211, input$Temp211)
+      e <- c(control1values[1])
+      f <- c(control1values[2])
+      dfc1 <- data.frame(e,f)
+      names(dfc1) <- c(selectedControl_1)
+      dfc1 <- dfc1[order( dfc1[1, ], decreasing = TRUE )]
+      namesdfc1 <- data.frame(a,b,c,d)
+      names(namesdfc1) <- c(plus5)
+      Control_1 <- bind_cols(namesdfc1, dfc1)
+      print(Control_1)
+      print(is.data.frame(Control_1))
+    }
+    else if ((input$TempNumber == 3)) {
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      e <- c(controlvalues[1])
+      f <- c(controlvalues[2])
+      g <- c(controlvalues[3])
+      df <- data.frame(e,f,g)
+      names(df) <- c(plus4)
+      df <- df[order( df[1, ], decreasing = TRUE )]
+      namesdf <- data.frame(a,b,c,d)
+      names(namesdf) <- c(plus5)
+      maindf <- bind_cols(namesdf, df)
+      print(maindf)
+      print(is.data.frame(maindf))
+    }
+    else if ((input$TempNumber == 4)) {
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      e <- c(controlvalues[1])
+      f <- c(controlvalues[2])
+      g <- c(controlvalues[3])
+      h <- c(controlvalues[4])
+      df <- data.frame(e,f,g,h)
+      names(df) <- c(plus4)
+      df <- df[order( df[1, ], decreasing = TRUE )]
+      namesdf <- data.frame(a,b,c,d)
+      names(namesdf) <- c(plus5)
+      maindf <- bind_cols(namesdf, df)
+      print(maindf)
+      print(is.data.frame(maindf))
+    }
+    else if ((input$TempNumber == 5)) {
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      e <- c(controlvalues[1])
+      f <- c(controlvalues[2])
+      g <- c(controlvalues[3])
+      h <- c(controlvalues[4])
+      i <- c(controlvalues[5])
+      df <- data.frame(e,f,g,h,i)
+      names(df) <- c(plus4)
+      df <- df[order( df[1, ], decreasing = TRUE )]
+      namesdf <- data.frame(a,b,c,d)
+      names(namesdf) <- c(plus5)
+      maindf <- bind_cols(namesdf, df)
+      print(maindf)
+      print(is.data.frame(maindf))
+    }
+    else if ((input$TempNumber == 6)) {
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      #e <- c(input$Temp211, input$Temp211, input$Temp211, input$Temp211)
+      e <- c(control1values[1])
+      f <- c(control1values[2])
+      g <- c(control1values[3])
+      h <- c(control1values[4])
+      i <- c(control1values[5])
+      j <- c(control1values[6])
+      dfc1 <- data.frame(e,f,g,h,i,j)
+      names(dfc1) <- c(selectedControl_1)
+      dfc1 <- dfc1[order( dfc1[1, ], decreasing = TRUE )]
+      namesdfc1 <- data.frame(a,b,c,d)
+      names(namesdfc1) <- c(plus5)
+      Control_1 <- bind_cols(namesdfc1, dfc1)
+      print(Control_1)
+      print(is.data.frame(Control_1))
+    }
+    else if ((input$TempNumber == 7)) {
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      e <- c(controlvalues[1])
+      f <- c(controlvalues[2])
+      g <- c(controlvalues[3])
+      h <- c(controlvalues[4])
+      i <- c(controlvalues[5])
+      j <- c(controlvalues[6])
+      k <- c(controlvalues[7])
+      df <- data.frame(e,f,g,h,i,j,k)
+      names(df) <- c(plus4)
+      df <- df[order( df[1, ], decreasing = TRUE )]
+      namesdf <- data.frame(a,b,c,d)
+      names(namesdf) <- c(plus5)
+      maindf <- bind_cols(namesdf, df)
+      print(maindf)
+      print(is.data.frame(maindf))
+    }
+    else if ((input$TempNumber == 8)) {
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      e <- c(controlvalues[1])
+      f <- c(controlvalues[2])
+      g <- c(controlvalues[3])
+      h <- c(controlvalues[4])
+      i <- c(controlvalues[5])
+      j <- c(controlvalues[6])
+      k <- c(controlvalues[7])
+      l <- c(controlvalues[8])
+      df <- data.frame(e,f,g,h,i,j,k,l)
+      names(df) <- c(plus4)
+      df <- df[order( df[1, ], decreasing = TRUE )]
+      namesdf <- data.frame(a,b,c,d)
+      names(namesdf) <- c(plus5)
+      maindf <- bind_cols(namesdf, df)
+      print(maindf)
+      print(is.data.frame(maindf))
+    }
+    else if ((input$TempNumber == 9)) {
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      e <- c(controlvalues[1])
+      f <- c(controlvalues[2])
+      g <- c(controlvalues[3])
+      h <- c(controlvalues[4])
+      i <- c(controlvalues[5])
+      j <- c(controlvalues[6])
+      k <- c(controlvalues[7])
+      l <- c(controlvalues[8])
+      m <- c(controlvalues[9])
+      df <- data.frame(e,f,g,h,i,j,k,l,m)
+      names(df) <- c(plus4)
+      df <- df[order( df[1, ], decreasing = TRUE )]
+      namesdf <- data.frame(a,b,c,d)
+      names(namesdf) <- c(plus5)
+      maindf <- bind_cols(namesdf, df)
+      print(maindf)
+      print(is.data.frame(maindf))
+    }
+    else if ((input$TempNumber == 10)) {
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      e <- c(controlvalues[1])
+      f <- c(controlvalues[2])
+      g <- c(controlvalues[3])
+      h <- c(controlvalues[4])
+      i <- c(controlvalues[5])
+      j <- c(controlvalues[6])
+      k <- c(controlvalues[7])
+      l <- c(controlvalues[8])
+      m <- c(controlvalues[9])
+      n <- c(controlvalues[10])
+      df <- data.frame(e,f,g,h,i,j,k,l,m,n)
+      names(df) <- c(plus4)
+      df <- df[order( df[1, ], decreasing = TRUE )]
+      namesdf <- data.frame(a,b,c,d)
+      names(namesdf) <- c(plus5)
+      maindf <- bind_cols(namesdf, df)
+      print(maindf)
+      print(is.data.frame(maindf))
+    }
+    else if ((input$ConcNumber == 1)) {
+      a <- c((paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c(input$conc111, input$conc111)
+      df <- data.frame(a,b)
+      names(df) <- c(plus2)}
+    else if ((input$ConcNumber == 2)) {
+      a <- c((paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c(input$conc211, input$conc211)
+      c <- c(input$conc212, input$conc212)
+      df <- data.frame(a,b,c)
+      names(df) <- c(plus2)}
+    else if ((input$ConcNumber == 3)) {
+      a <- c((paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c(input$conc311, input$conc311)
+      c <- c(input$conc312, input$conc312)
+      d <- c(input$conc313, input$conc313)
+      df <- data.frame(a,b,c,d)
+      names(df) <- c(plus2)}
+    else if ((input$ConcNumber == 4)) {
+      a <- c((paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c(input$conc411, input$conc411)
+      c <- c(input$conc412, input$conc412)
+      d <- c(input$conc413, input$conc413)
+      e <- c(input$conc414, input$conc414)
+      df <- data.frame(a,b,c,d,e)
+      names(df) <- c(plus2)}
+    else if ((input$ConcNumber == 5)) {
+      a <- c((paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c(input$conc511, input$conc511)
+      c <- c(input$conc512, input$conc512)
+      d <- c(input$conc513, input$conc513)
+      e <- c(input$conc514, input$conc514)
+      f <- c(input$conc515, input$conc515)
+      df <- data.frame(a,b,c,d,e,f)
+      names(df) <- c(plus2)}
+    else if ((input$ConcNumber == 6)) {
+      a <- c((paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c(input$conc611, input$conc611)
+      c <- c(input$conc612, input$conc612)
+      d <- c(input$conc613, input$conc613)
+      e <- c(input$conc614, input$conc614)
+      f <- c(input$conc615, input$conc615)
+      g <- c(input$conc616, input$conc616)
+      df <- data.frame(a,b,c,d,e,f,g)
+      names(df) <- c(plus2)}
+    else if ((input$ConcNumber == 7)) {
+      a <- c((paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c(input$conc711, input$conc711)
+      c <- c(input$conc712, input$conc712)
+      d <- c(input$conc713, input$conc713)
+      e <- c(input$conc714, input$conc714)
+      f <- c(input$conc715, input$conc715)
+      g <- c(input$conc716, input$conc716)
+      h <- c(input$conc717, input$conc717)
+      df <- data.frame(a,b,c,d,e,f,g,h)
+      names(df) <- c(plus2)}
+    else if ((input$ConcNumber == 8)) {
+      a <- c((paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c(input$conc811, input$conc811)
+      c <- c(input$conc812, input$conc812)
+      d <- c(input$conc813, input$conc813)
+      e <- c(input$conc814, input$conc814)
+      f <- c(input$conc815, input$conc815)
+      g <- c(input$conc816, input$conc816)
+      h <- c(input$conc817, input$conc817)
+      i <- c(input$conc818, input$conc818)
+      df <- data.frame(a,b,c,d,e,f,g,h,i)
+      names(df) <- c(plus2)}
+    else if ((input$ConcNumber == 9)) {
+      a <- c((paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c(input$conc911, input$conc911)
+      c <- c(input$conc912, input$conc912)
+      d <- c(input$conc913, input$conc913)
+      e <- c(input$conc914, input$conc914)
+      f <- c(input$conc915, input$conc915)
+      g <- c(input$conc916, input$conc916)
+      h <- c(input$conc917, input$conc917)
+      i <- c(input$conc918, input$conc918)
+      j <- c(input$conc919, input$conc919)
+      df <- data.frame(a,b,c,d,e,f,g,h,i,j)
+      names(df) <- c(plus2)}
+    else if ((input$ConcNumber == 10)) {
+      a <- c((paste0(input$drug_id, "_1")), (paste0(input$drug_id, "_2")))
+      b <- c(input$conc11, input$conc11)
+      c <- c(input$conc12, input$conc12)
+      d <- c(input$conc13, input$conc13)
+      e <- c(input$conc14, input$conc14)
+      f <- c(input$conc15, input$conc15)
+      g <- c(input$conc16, input$conc16)
+      h <- c(input$conc17, input$conc17)
+      i <- c(input$conc18, input$conc18)
+      j <- c(input$conc19, input$conc19)
+      k <- C(input$conc20, input$conc20)
+      df <- data.frame(a,b,c,d,e,f,g,h,i,j,k)
+      names(df) <- c(plus2)}
+    df
+  })
+  
+  observeEvent(input$TR_data, {
+  #output$TR_data <- ({
+    plus4 <- c("gene_name", "qssm", "qupm", (paste0("rel_fc_", input$select_rows_selected)))
+    plus5 <- c("gene_name", "qssm", "qupm")
+    inFile <- input$file1
+    
+    if (is.null(inFile))
+      return(NULL)
+    datafile <- read.table(inFile$datapath, sep = "\t", stringsAsFactors = FALSE, header = TRUE)
+    ##datafile <- datafile[which(datafile$Potential.contaminant != "+"),]
+    ##datafile <- datafile[which(datafile$Reverse != "+"),]
+    ##datafile <- datafile[which(datafile$Only.identified.by.site != "+"),]
+    ##datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),";"),"[",1)
+    #datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),"|"),"[",2)
+    #datafile$Gene.names<-lapply(strsplit(as.character(datafile$Gene.names),";"),"[",1)
+    tokeep <- grep(pattern = "^Reporter.Intensity.corrected|Unique.peptides|Peptides|Protein.IDs|site|Reverse|Potential", colnames(datafile), value = TRUE)
+    Filtered.df <- datafile[, tokeep]
+    #print(Filtered.df)
+    #print(datafile$Gene.names)
+    clist <- as.data.frame(colnames(Filtered.df))
+    FilteredPlusData <- clist[input$select_rows_selected, ]
+    plus6 <- c(FilteredPlusData)
+    FilteredPlus <- clist[input$select_rows_selected, ]
+    #print(FilteredPlus)
+    selectedControl_1 <- grep(pattern = "Control1", FilteredPlus, value = TRUE)
+    selectedControl_2 <- grep(pattern = "Control2", FilteredPlus, value = TRUE) #capitalization might change
+    control1values <- lapply(strsplit(as.character(selectedControl_1),"[.]"),"[",4)
+    control1values <- as.numeric(control1values)
+    control2values <- lapply(strsplit(as.character(selectedControl_2),"[.]"),"[",4)
+    control2values <- as.numeric(control2values)
+    #print(selectedControl_1)
+    #print(selectedControl_2)
+    #print(control1values)
+    #print(control2values)
+    plus2 <- c("Experiment", (paste0("rel_fc_", input$select_rows_selected)))
+    plus4 <- c(FilteredPlus)
+    current_drug <- input$DrugName1
+    Drugname11 <- (paste0(input$DrugName1, "1")) 
+    Drugname12 <- (paste0(input$DrugName1, "2"))
+    selectedDrug_1 <- grep(pattern = Drugname11, FilteredPlus, value = TRUE)
+    selectedDrug_2 <- grep(pattern = Drugname12, FilteredPlus, value = TRUE)
+    drug1values <- lapply(strsplit(as.character(selectedDrug_1),"[.]"),"[",4)
+    drug1values <- as.numeric(drug1values)
+    drug2values <- lapply(strsplit(as.character(selectedDrug_2),"[.]"),"[",4)
+    drug2values <- as.numeric(drug2values)
+    #print(selectedDrug_1)
+    #print(selectedDrug_2)
+    #print(drug1values)
+    #print(drug2values)
+    plus3 <- c("Experiment", "Condition", "ComparisonVT1", "ComparisonVT2", FilteredPlus)
+    plus4 <- c(FilteredPlus)
+    plus5 <- c("Experiment", "Condition", "ComparisonVT1", "ComparisonVT2")
+    plus8 <- c("Experiment")
+    
+    
+    a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+    b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+    c <- c("x", "", "x", "")
+    d <- c("", "x", "", "x")
+    cdf <- list()
+    for (x in 1:(input$TempNumber)) {
+      cdf[[x]] <- c(control1values[x])
+    }
+    cdf <- do.call(cbind, cdf)
+    cdfc1 <- data.frame(cdf)
+    #print(cdfc1)
+    names(cdfc1) <- c(selectedControl_1)
+    cdfc1 <- cdfc1[order( cdfc1[1, ], decreasing = TRUE )]
+    valuecgorder <- drug1values[order( drug1values, decreasing = TRUE)]
+    header <- c("126", "127L", "127H", "128L", "128H", "129L", "129H", "130L", "130H", "131L")
+    names(cdfc1) <- c(header)
+    #names(cdfc1) <- c(valuecgorder)
+    namescdfc1 <- data.frame(a,b,c,d)
+    names(namescdfc1) <- c(plus5)
+    Config1 <- bind_cols(namescdfc1, cdfc1)
+    print(Config1)
+    
+    
+    dfc1 <- list()
+    for (x in 1:(input$TempNumber)) {
+      dfc1[[x]] <- c(control1values[x])
+    }
+    #print(dfc1)
+    dfc1 <- do.call(cbind, dfc1)
+    #print(dfc1)
+    dfc1 <- data.frame(dfc1)
+    #print(dfc1)
+    names(dfc1) <- c(selectedControl_1)
+    #print(dfc1)
+    dfc1order <- dfc1[order( dfc1[1, ], decreasing = TRUE )]
+    #print(dfc1order)
+    gene_name <- c(datafile$Protein.IDs)
+    #print(gene_name)
+    qssmc1 <- c(datafile$Peptides.Control1)
+    #print(qssmc1)
+    qupmc1 <- c(datafile$Unique.Peptides.Control1)
+    #print(qupmc1)
+    colnamesDatac1 <- colnames(dfc1order)
+    #print(colnamesDatac1)
+    #print(Filtered.df)
+    FilteredPlusc1 <- Filtered.df[, colnamesDatac1]
+    #print(FilteredPlusc1)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valuec1order <- control1values[order( control1values, decreasing = TRUE)]
+    #print(valuec1order)
+    Relc1 <- paste0("rel_fc_", header)
+    #Reld1 <- paste0("rel_fc_", valuec1order)
+    ##ref_label <- c(valuec1order[input$TempNumber])
+    Standardizedcoldatac <- list()
+    for (x in 1:(input$TempNumber)) {
+      Standardizedcoldatac[x] <- as.data.frame((FilteredPlusc1[, x] / FilteredPlusc1[, (input$TempNumber)]))
+    }
+    Standardizedcoldatac <- do.call(cbind, Standardizedcoldatac)
+    Standardizedcoldatac <- data.frame(Standardizedcoldatac)
+    #print(Standardizedcoldatac)
+    dfdatac1 <- data.frame(gene_name, qssmc1, qupmc1, Standardizedcoldatac)
+    #print(dfdatac1)
+    colnames(dfdatac1) <- c("gene_name", "qssm", "qupm", Relc1)
+    #print(nrow(FilteredPlusc1))
+    FilteredPlusc12 <- dfdatac1[rowSums(FilteredPlusc1[]) > 0,]
+    #print(FilteredPlusc12)
+    #print(is.data.frame(FilteredPlusd12))
+    #print(nrow(FilteredPlusd12))
+    FilteredPlusc12$"gene_name"<-lapply(strsplit(as.character(FilteredPlusc12$"gene_name"),";"),"[",1)
+    
+    
+    dfc2 <- list()
+    for (x in 1:(input$TempNumber)) {
+      dfc2[[x]] <- c(control2values[x])
+    }
+    dfc2 <- do.call(cbind, dfc2)
+    #print(dfc2)
+    dfc2 <- data.frame(dfc2)
+    names(dfc2) <- c(selectedControl_2)
+    dfc2order <- dfc2[order( dfc2[1, ], decreasing = TRUE )]
+    ##gene_name <- c(datafile$"Gene names")
+    qssmc2 <- c(datafile$Peptides.Control2)
+    qupmc2 <- c(datafile$Unique.Peptides.Control2)
+    #print(qupmc2)
+    colnamesDatac2 <- colnames(dfc2order)
+    #print(colnamesDatac1)
+    #print(Filtered.df)
+    FilteredPlusc2 <- Filtered.df[, colnamesDatac2]
+    #print(FilteredPlusd1)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valuec2order <- control2values[order( control2values, decreasing = TRUE)]
+    #print(valuec2order)
+    Relc2 <- paste0("rel_fc_", header)
+    #Relc2 <- paste0("rel_fc_", valuec2order)
+    ##ref_label <- c(valuec2order[input$TempNumber])
+    Standardizedcoldatac2 <- list()
+    for (x in 1:(input$TempNumber)) {
+      Standardizedcoldatac2[x] <- as.data.frame((FilteredPlusc2[, x] / FilteredPlusc2[, (input$TempNumber)]))
+    }
+    Standardizedcoldatac2 <- do.call(cbind, Standardizedcoldatac2)
+    Standardizedcoldatac2 <- data.frame(Standardizedcoldatac2)
+    #print(Standardizedcoldatac2)
+    dfdatac2 <- data.frame(gene_name, qssmc2, qupmc2, Standardizedcoldatac2)
+    #print(dfdatac2)
+    colnames(dfdatac2) <- c("gene_name", "qssm", "qupm", Relc2)
+    #print(nrow(FilteredPlusc2))
+    FilteredPlusc22 <- dfdatac2[rowSums(FilteredPlusc2[]) > 0,]
+    #print(FilteredPlusc22)
+    #print(is.data.frame(FilteredPlusc22))
+    #print(nrow(FilteredPlusc22))
+    FilteredPlusc22$"gene_name"<-lapply(strsplit(as.character(FilteredPlusc22$"gene_name"),";"),"[",1)
+    
+    
+    dfd1 <- list()
+    for (x in 1:(input$TempNumber)) {
+      dfd1[[x]] <- c(drug1values[x])
+    }
+    dfd1 <- do.call(cbind, dfd1)
+    dfd1 <- data.frame(dfd1)
+    #print(dfd1)
+    names(dfd1) <- c(selectedDrug_1)
+    #print(dfd1)
+    dfd1order <- dfd1[order( dfd1[1, ], decreasing = TRUE )]
+    #gene_name <- c(datafile$"Gene names")
+    qssm <- (paste0("Peptides ", Drugname11))
+    print(qssm)
+    #print(datafile)
+    qssmd1 <- datafile[, (paste0("Peptides.", "Staurosporine1"))]
+    ##qssmd1 <- datafile[, (paste0("Peptides.", Drugname11))]
+    #qssmd1 <- c(datafile$paste0("Peptides.", Drugname11))
+    qupmd1 <- datafile[, (paste0("Unique.Peptides.", "Staurosporine1"))]
+    
+    ##qupmd1 <- datafile[, (paste0("Unique.peptides.", Drugname11))]
+    #print(qssmd1)
+    colnamesDatad1 <- colnames(dfd1order)
+    #print(colnamesDatad1)
+    #print(Filtered.df)
+    FilteredPlusd1 <- Filtered.df[, colnamesDatad1]
+    #print(FilteredPlusd1)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valued1order <- drug1values[order( drug1values, decreasing = TRUE)]
+    #print(valued1order)
+    Reld1 <- paste0("rel_fc_", header)
+    #Reld1 <- paste0("rel_fc_", valuec1order)
+    ##ref_label <- c(valuec1order[input$TempNumber])
+    Standardizedcoldatad <- list()
+    for (x in 1:(input$TempNumber)) {
+      Standardizedcoldatad[x] <- as.data.frame((FilteredPlusd1[, x] / FilteredPlusd1[, (input$TempNumber)]))
+    }
+    Standardizedcoldatad <- do.call(cbind, Standardizedcoldatad)
+    Standardizedcoldatad <- data.frame(Standardizedcoldatad)
+    #print(Standardizedcoldatad)
+    dfdatad1 <- data.frame(gene_name, qssmd1, qupmd1, Standardizedcoldatad)
+    #print(dfdatad1)
+    colnames(dfdatad1) <- c("gene_name", "qssm", "qupm", Reld1)
+    #print(nrow(FilteredPlusd1))
+    FilteredPlusd12 <- dfdatad1[rowSums(FilteredPlusd1[]) > 0,]
+    #print(FilteredPlusd12)
+    #print(is.data.frame(FilteredPlusd12))
+    #print(nrow(FilteredPlusd12))
+    FilteredPlusd12$"gene_name"<-lapply(strsplit(as.character(FilteredPlusd12$"gene_name"),";"),"[",1)
+    
+    
+    dfd2 <- list()
+    for (x in 1:(input$TempNumber)) {
+      dfd2[[x]] <- c(drug2values[x])
+    }
+    dfd2 <- do.call(cbind, dfd2)
+    dfd2 <- data.frame(dfd2)
+    names(dfd2) <- c(selectedDrug_2)
+    dfd2order <- dfd2[order( dfd2[1, ], decreasing = TRUE )]
+    ##gene_name <- c(datafile$"Gene names")
+    qssmd2 <- datafile[, (paste0("Peptides.", "Staurosporine2"))]
+    
+    ##qssmd2 <- datafile[, (paste0("Peptides.", Drugname12))]
+    qupmd2 <- datafile[, (paste0("Unique.Peptides.", "Staurosporine2"))]
+    
+    ##qupmd2 <- datafile[, (paste0("Unique.peptides.", Drugname12))]
+    #print(qupm)
+    colnamesDatad2 <- colnames(dfd2order)
+    #print(colnamesDatac1)
+    #print(Filtered.df)
+    FilteredPlusd2 <- Filtered.df[, colnamesDatad2]
+    #print(FilteredPlusd2)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valued2order <- drug2values[order( drug2values, decreasing = TRUE)]
+    #print(valued2order)
+    Reld2 <- paste0("rel_fc_", header)
+    #Reld2 <- paste0("rel_fc_", valued2order)
+    ##ref_label <- c(valued2order[input$TempNumber])
+    Standardizedcoldatad2 <- list()
+    for (x in 1:(input$TempNumber)) {
+      Standardizedcoldatad2[x] <- as.data.frame((FilteredPlusd2[, x] / FilteredPlusd2[, (input$TempNumber)]))
+    }
+    Standardizedcoldatad2 <- do.call(cbind, Standardizedcoldatad2)
+    Standardizedcoldatad2 <- data.frame(Standardizedcoldatad2)
+    #print(Standardizedcoldatad2)
+    dfdatad2 <- data.frame(gene_name, qssmd2, qupmd2, Standardizedcoldatad2)
+    #print(dfdatad2)
+    colnames(dfdatad2) <- c("gene_name", "qssm", "qupm", Reld2)
+    #print(nrow(FilteredPlusc2))
+    FilteredPlusd22 <- dfdatad2[rowSums(FilteredPlusd2[]) > 0,]
+    #print(FilteredPlusd22)
+    #print(is.data.frame(FilteredPlusd22))
+    #print(nrow(FilteredPlusd22))
+    FilteredPlusd22$"gene_name"<-lapply(strsplit(as.character(FilteredPlusd22$"gene_name"),";"),"[",1)
+    
+    
+    FullList <- bind_cols(dfdatac1,dfdatac2,dfdatad1,dfdatad2)
+    FullList <- na.omit(FullList)
+    #print(FullList)
+    FullListRows <- rownames(FullList)
+    #print(FullListRows)
+    
+    FilteredPlusC12 <- na.omit(FilteredPlusc12)
+    FilteredPlusC22 <- na.omit(FilteredPlusc22)
+    FilteredPlusD12 <- na.omit(FilteredPlusd12)
+    FilteredPlusD22 <- na.omit(FilteredPlusd22)
+    #print(FilteredPlusD22)
+    
+    rowFilterc12 <- FilteredPlusc12[FullListRows, ]
+    rowFilterc22 <- FilteredPlusc22[FullListRows, ]
+    rowFilterd12 <- FilteredPlusd12[FullListRows, ]
+    rowFilterd22 <- FilteredPlusd22[FullListRows, ]
+    #print(nrow(rowFilterc12))
+    #print(nrow(rowFilterc22))
+    #print(nrow(rowFilterd12))
+    #print(nrow(rowFilterd22))
+    #print(rowFilterc12)
+    
+    #lesserRowsc1 <- dfdatac1[1:508, ]
+    #lesserRowsc2 <- dfdatac2[1:509, ]
+    #lesserRowsd1 <- dfdatad1[1:508, ]
+    #lesserRowsd2 <- dfdatad2[1:509, ]
+    
+    
+    TR_data <- list(rowFilterc12, rowFilterc22, rowFilterd12, rowFilterd22) #Main
+    
+    #TR_data <- list(lesserRowsc1, lesserRowsc2, lesserRowsd1, lesserRowsd2)
+    
+    #TR_data <- list(FilteredPlusC12, FilteredPlusC22, FilteredPlusD12, FilteredPlusD22)
+    #TR_data <- list(dfdatac1, dfdatac2, dfdatad1, dfdatad2)  #WORKS?
+    
+    #names(TR_data) <- c("Vehicle_1", "Vehicle_2", "Panobinostat_1", "Panobinostat_2")
+    
+    ##names(TR_data) <- c("Vehicle_1", "Vehicle_2", Drugname11, Drugname12)
+    names(TR_data) <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+    
+    #TR_dataFiltered <- na.omit(TR_data)
+    print(TR_data)
+    #print(is.list(TR_data))
+    
+    dir.create(paste0(getwd(),"/Analysis"))
+    #resultPath = "C:\\Users\\dbgec\\Desktop\\Analysis"
+    resultPath = paste0(getwd(),"/Analysis")
+    #resultPath = file.path(getwd())
+    #resultPath = file.path(Sys.getenv("USERPROFILE"),"Desktop")
+    
+    ## Start the workflow
+    print(1)
+    myTppTrDefaultNormReqs<- {
+      dfFcFilters <- data.frame(fcColumn = c(7, 9, 10), thresholdLower = c(0.2, 0.1, 0.09), thresholdUpper = c(0.6, 0.3, 0.2), stringsAsFactors = FALSE)
+      dfOtherFilters <- data.frame(colName = "qssm", thresholdLower = 4,thresholdUpper = Inf, stringsAsFactors = FALSE)
+      filterCrit <- list(fcRequirements = dfFcFilters, otherRequirements = dfOtherFilters)
+    #  return(filterCrit)
+    }
+    print(2)
+    #print(is.list(tpptrDefaultNormReqs()))
+    #print(is.list(myTppTrDefaultNormReqs))
+    
+    #trDataNormalized <- normResults[["normData"]]
+    #print(normResults)
+    #print(trDataNormalized)
+    
+    #print(myTppTrDefaultNormReqs)
+    #print(tpptrDefaultNormReqs())
+    
+    #print(attributes(TR_data[[1]]))
+    #print(attributes(hdacTR_data[[1]]))
+    
+    TRresults <- analyzeTPPTR(configTable = Config1,
+                              methods = "meltcurvefit",
+                              data = TR_data,
+                              nCores = 2,
+                              resultPath = resultPath,
+                              plotCurves = FALSE,
+                              #normalize = TRUE,
+                              normReqs = myTppTrDefaultNormReqs,
+                              #verbose = TRUE
+    )
+    print(3)
+    #if (is.error(TRresults))
+    # return(NULL)
+    
+    ## Proteins that display a clear response to treatment
+    #tr_targets1 <- subset(TRresults, (paste0("passed_filter_", input$DrugName1, "_1_vs_Vehicle_1")))$Protein_ID
+    tr_targets1 <- subset(TRresults, passed_filter_Staurosporine_1_vs_Vehicle_1)$Protein_ID
+    print(tr_targets1)
+    #tr_targets2 <- subset(TRresults, (paste0("passed_filter_", input$DrugName1, "_2_vs_Vehicle_2")))$Protein_ID
+    tr_targets2 <- subset(TRresults, passed_filter_Staurosporine_2_vs_Vehicle_2)$Protein_ID
+    
+    print(tr_targets2)
+    tr_targets <- intersect(tr_targets1,tr_targets2)
+    print(tr_targets)
+    Proteins_That_Passed_The_Filtering <- tr_targets
+    tr_targets_df <- data.frame(Proteins_That_Passed_The_Filtering)
+    output$passed_data_tr <- renderDataTable({tr_targets_df}, rownames=FALSE)
+    
+    #tr_targets <- subset(TRresults, fulfills_all_4_requirements)$Protein_ID #THIS MAY BE THE ISSUE, print says character(0)
+    #print(tr_targets)
+    print(4)
+    
+    trData <- tpptrImport(configTable = Config1, data = TR_data)
+    print(trData)
+    #Normalization
+    normResults <- tpptrNormalize(data = trData)
+    print(normResults)
+    
+    trDataNormalized <- normResults[["normData"]]
+    print(trDataNormalized)
+    #Curve Fitting
+    trData_targets <- lapply(trDataNormalized, function(d)
+      d[Biobase::featureNames(d) %in% tr_targets,])
+    print(trData_targets)
+    #dir.create(paste0(getwd(),"/MeltCurve"))
+    resultPath2 = paste0(getwd(),"/MeltCurve")
+    
+    trData_targets <- tpptrCurveFit(data = trData_targets, resultPath = resultPath2, nCores = 2) #error in data.frame: arguments imply differing number of rows 1, 0
+    
+    
+    if ((input$TempNumber == 9)) {
+      #a <- c("Vehicle_1", "Vehicle_2", "Panobinostat_1", "Panobinostat_2")
+      a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+      b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+      c <- c("x", "", "x", "")
+      d <- c("", "x", "", "x")
+      e <- c(control1values[1])
+      f <- c(control1values[2])
+      g <- c(control1values[3])
+      h <- c(control1values[4])
+      i <- c(control1values[5])
+      j <- c(control1values[6])
+      k <- c(control1values[7])
+      l <- c(control1values[8])
+      m <- c(control1values[9])
+      n <- c(control1values[10])
+      cdfc1 <- data.frame(e,f,g,h,i,j,k,l,m,n)
+      names(cdfc1) <- c(selectedControl_1)
+      cdfc1 <- cdfc1[order( cdfc1[1, ], decreasing = TRUE )]
+      valuecgorder <- control1values[order( control1values, decreasing = TRUE)]
+      header <- c("126", "127L", "127H", "128L", "128H", "129L", "129H", "130L", "130H", "131L")
+      names(cdfc1) <- c(header)
+      namescdfc1 <- data.frame(a,b,c,d)
+      names(namescdfc1) <- c(plus5)
+      Config1 <- bind_cols(namescdfc1, cdfc1)
+      #print(Config1)
+      #print(is.data.frame(Config1))
+      #print(hdacTR_config)
+      #print(is.data.frame(hdacTR_config))
+      
+      
+      ac1 <- c(control1values[1])
+      bc1 <- c(control1values[2])
+      cc1 <- c(control1values[3])
+      dc1 <- c(control1values[4])
+      ec1 <- c(control1values[5])
+      fc1 <- c(control1values[6])
+      gc1 <- c(control1values[7])
+      hc1 <- c(control1values[8])
+      ic1 <- c(control1values[9])
+      jc1 <- c(control1values[10])
+      dfc1 <- data.frame(ac1,bc1,cc1,dc1,ec1,fc1,gc1,hc1,ic1,jc1)
+      #print(dfc1)
+      names(dfc1) <- c(selectedControl_1)
+      dfc1order <- dfc1[order( dfc1[1, ], decreasing = TRUE )]
+      
+      #proteinID <- c(unlist(datafile$Protein.IDs))
+      gene_name <- c(datafile$Gene.names)                #GENE NAMES COLUMN
+
+      #print(proteinID)
+      qssmc1 <- c(datafile$Peptides.Control_1)
+      #print(qssmc1)
+      if (is.null(qssmc1[1])) {
+        (qssmc1<-c(datafile$Peptides))
+      }
+      #print(qssmc1)
+      qupmc1 <- c(datafile$Unique.peptides.Control_1)
+      #print(qupmc1)
+      if (is.null(qupmc1[1])) {
+        (qupmc1<-c(datafile$Unique.peptides))
+      }
+      #print(qupmc1)
+      colnamesDatac1 <- colnames(dfc1order)
+      FilteredPlusc1 <- Filtered.df[, colnamesDatac1]
+      #print(FilteredPlusc1)
+      #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+      valuec1order <- control1values[order( control1values, decreasing = TRUE)]
+      #print(valuec1order)
+      Relc1 <- paste0("rel_fc_", header)
+      #print(qupm)
+      Standardizedcoldatac1 <- as.data.frame((FilteredPlusc1[, 1] / FilteredPlusc1[, 10]))
+      Standardizedcoldatac12 <- as.data.frame(FilteredPlusc1[, 2] / FilteredPlusc1[, 10])
+      Standardizedcoldatac13 <- as.data.frame(FilteredPlusc1[, 3] / FilteredPlusc1[, 10])
+      Standardizedcoldatac14 <- as.data.frame(FilteredPlusc1[, 4] / FilteredPlusc1[, 10])
+      Standardizedcoldatac15 <- as.data.frame(FilteredPlusc1[, 5] / FilteredPlusc1[, 10])
+      Standardizedcoldatac16 <- as.data.frame(FilteredPlusc1[, 6] / FilteredPlusc1[, 10])
+      Standardizedcoldatac17 <- as.data.frame(FilteredPlusc1[, 7] / FilteredPlusc1[, 10])
+      Standardizedcoldatac18 <- as.data.frame(FilteredPlusc1[, 8] / FilteredPlusc1[, 10])
+      Standardizedcoldatac19 <- as.data.frame(FilteredPlusc1[, 9] / FilteredPlusc1[, 10])
+      Standardizedcoldatac110 <- as.data.frame(FilteredPlusc1[, 10] / FilteredPlusc1[, 10])
+      standardizeddataC1 <- bind_cols(Standardizedcoldatac1, Standardizedcoldatac12, Standardizedcoldatac13, Standardizedcoldatac14, Standardizedcoldatac15, Standardizedcoldatac16, Standardizedcoldatac17, Standardizedcoldatac18, Standardizedcoldatac19, Standardizedcoldatac110)
+      #print(standardizeddataC1)
+      
+      dfdatac1 <- data.frame(gene_name, qssmc1, qupmc1, standardizeddataC1)
+      #dfdatac1 <- data.frame(proteinID, qssm, qupm, standardizeddataC1)
+      #print(dfdatac1)
+      colnames(dfdatac1) <- c("gene_name", "qssm", "qupm", Relc1)     #GENE NAMES COLUMN
+      #colnames(dfdatac1) <- c("protein_IDs", "qssm", "qupm", Relc1)
+      
+      #print(nrow(FilteredPlusc1))
+      FilteredPlusc12 <- dfdatac1[rowSums(FilteredPlusc1[]) > 0,]
+      #print((FilteredPlusc12))
+      
+      FilteredPlusc12$"gene_name"<-lapply(strsplit(as.character(FilteredPlusc12$"gene_name"),";"),"[",1)      #GENE NAMES COLUMN
+      #FilteredPlusc12$"protein_IDs"<-lapply(strsplit(as.character(FilteredPlusc12$"protein_IDs"),";"),"[",1)
+      
+      #print((FilteredPlusc12))
+      
+      
+      ac2 <- c(control2values[1])
+      bc2 <- c(control2values[2])
+      cc2 <- c(control2values[3])
+      dc2 <- c(control2values[4])
+      ec2 <- c(control2values[5])
+      fc2 <- c(control2values[6])
+      gc2 <- c(control2values[7])
+      hc2 <- c(control2values[8])
+      ic2 <- c(control2values[9])
+      jc2 <- c(control2values[10])
+      dfc2 <- data.frame(ac2,bc2,cc2,dc2,ec2,fc2,gc2,hc2,ic2,jc2)
+      names(dfc2) <- c(selectedControl_2)
+      dfc2order <- dfc2[order( dfc2[1, ], decreasing = TRUE )]
+      
+      #proteinID <- c(unlist(datafile$Protein.IDs))
+      #gene_name <- c(datafile$Gene.names)
+      
+      qssmc2 <- c(datafile$Peptides.Control_2)
+      if (is.null(qssmc2[1])) {
+        (qupmc2<-c(datafile$Peptides))
+      }
+      qupmc2 <- c(datafile$Unique.peptides.Control_2)
+      if (is.null(qupmc2[1])) {
+        (qupmc2<-c(datafile$Unique.peptides))
+      }
+      colnamesDatac2 <- colnames(dfc2order)
+      FilteredPlusc2 <- Filtered.df[, colnamesDatac2]
+      #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+      valuec2order <- control2values[order( control2values, decreasing = TRUE)]
+      #print(valuec2order)
+      Relc2 <- paste0("rel_fc_", header)
+      Standardizedcoldatac2 <- as.data.frame((FilteredPlusc2[, 1] / FilteredPlusc2[, 10]))
+      Standardizedcoldatac22 <- as.data.frame(FilteredPlusc2[, 2] / FilteredPlusc2[, 10])
+      Standardizedcoldatac23 <- as.data.frame(FilteredPlusc2[, 3] / FilteredPlusc2[, 10])
+      Standardizedcoldatac24 <- as.data.frame(FilteredPlusc2[, 4] / FilteredPlusc2[, 10])
+      Standardizedcoldatac25 <- as.data.frame(FilteredPlusc2[, 5] / FilteredPlusc2[, 10])
+      Standardizedcoldatac26 <- as.data.frame(FilteredPlusc2[, 6] / FilteredPlusc2[, 10])
+      Standardizedcoldatac27 <- as.data.frame(FilteredPlusc2[, 7] / FilteredPlusc2[, 10])
+      Standardizedcoldatac28 <- as.data.frame(FilteredPlusc2[, 8] / FilteredPlusc2[, 10])
+      Standardizedcoldatac29 <- as.data.frame(FilteredPlusc2[, 9] / FilteredPlusc2[, 10])
+      Standardizedcoldatac210 <- as.data.frame(FilteredPlusc2[, 10] / FilteredPlusc2[, 10])
+      standardizeddataC2 <- bind_cols(Standardizedcoldatac2, Standardizedcoldatac22, Standardizedcoldatac23, Standardizedcoldatac24, Standardizedcoldatac25, Standardizedcoldatac26, Standardizedcoldatac27, Standardizedcoldatac28, Standardizedcoldatac29, Standardizedcoldatac210)
+      #print(standardizeddata)
+      
+      dfdatac2 <- data.frame(gene_name, qssmc2, qupmc2, standardizeddataC2)
+      #dfdatac2 <- data.frame(proteinID, qssm, qupm, standardizeddataC2)
+      
+      colnames(dfdatac2) <- c("gene_name", "qssm", "qupm", Relc2)
+      #colnames(dfdatac2) <- c("protein_IDs", "qssm", "qupm", Relc1)
+      
+      #print(nrow(FilteredPlusc2))
+      FilteredPlusc22 <- dfdatac2[rowSums(FilteredPlusc2[]) > 0,]
+      
+      FilteredPlusc22$"gene_name"<-lapply(strsplit(as.character(FilteredPlusc22$"gene_name"),";"),"[",1)
+
+      #print(FilteredPlusc22)
+      #print(is.data.frame(FilteredPlusc22))
+      #print(nrow(FilteredPlusc12))
+      
+      
+      ad1 <- c(drug1values[1])
+      bd1 <- c(drug1values[2])
+      cd1 <- c(drug1values[3])
+      dd1 <- c(drug1values[4])
+      ed1 <- c(drug1values[5])
+      fd1 <- c(drug1values[6])
+      gd1 <- c(drug1values[7])
+      hd1 <- c(drug1values[8])
+      id1 <- c(drug1values[9])
+      jd1 <- c(drug1values[10])
+      dfd1 <- data.frame(ad1,bd1,cd1,dd1,ed1,fd1,gd1,hd1,id1,jd1)
+      #print(dfd1)
+      names(dfd1) <- c(selectedDrug_1)
+      dfd1order <- dfd1[order( dfd1[1, ], decreasing = TRUE )]
+
+      #proteinID <- c(unlist(datafile$Protein.IDs))
+      #gene_name <- c(datafile$Gene.names)
+      Peptidesd1 <-paste0("Peptides.", Drugname11)
+      qssmd1 <- c(datafile$Peptides.Lysopilin_1)
+      if (is.null(qssmd1[1])) {
+        (qupmd1<-c(datafile$Peptides))
+        print(qupmd1)
+      }#----------------------------------------------------------------------Peptides.Drugname11
+      qupmd1 <- c(datafile$Unique.peptides.Lysopilin_1)
+      if (is.null(qupmd1[1])) {
+        (qupmd1<-c(datafile$Unique.peptides))
+      }#----------------------------------------------------------------------Unique.Peptides.Drugname11
+      colnamesDatad1 <- colnames(dfd1order)
+      FilteredPlusd1 <- Filtered.df[, colnamesDatad1]
+      #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+      valued1order <- drug1values[order( drug1values, decreasing = TRUE)]
+      #print(valued1order)
+      Reld1 <- paste0("rel_fc_", header)
+      Standardizedcoldatad1 <- as.data.frame((FilteredPlusd1[, 1] / FilteredPlusd1[, 10]))
+      Standardizedcoldatad12 <- as.data.frame(FilteredPlusd1[, 2] / FilteredPlusd1[, 10])
+      Standardizedcoldatad13 <- as.data.frame(FilteredPlusd1[, 3] / FilteredPlusd1[, 10])
+      Standardizedcoldatad14 <- as.data.frame(FilteredPlusd1[, 4] / FilteredPlusd1[, 10])
+      Standardizedcoldatad15 <- as.data.frame(FilteredPlusd1[, 5] / FilteredPlusd1[, 10])
+      Standardizedcoldatad16 <- as.data.frame(FilteredPlusd1[, 6] / FilteredPlusd1[, 10])
+      Standardizedcoldatad17 <- as.data.frame(FilteredPlusd1[, 7] / FilteredPlusd1[, 10])
+      Standardizedcoldatad18 <- as.data.frame(FilteredPlusd1[, 8] / FilteredPlusd1[, 10])
+      Standardizedcoldatad19 <- as.data.frame(FilteredPlusd1[, 9] / FilteredPlusd1[, 10])
+      Standardizedcoldatad110 <- as.data.frame(FilteredPlusd1[, 10] / FilteredPlusd1[, 10])
+      standardizeddataD1 <- bind_cols(Standardizedcoldatad1, Standardizedcoldatad12, Standardizedcoldatad13, Standardizedcoldatad14, Standardizedcoldatad15, Standardizedcoldatad16, Standardizedcoldatad17, Standardizedcoldatad18, Standardizedcoldatad19, Standardizedcoldatad110)
+      #print(standardizeddata)
+      
+      dfdatad1 <- data.frame(gene_name, qssmd1, qupmd1, standardizeddataD1)
+      #dfdatad1 <- data.frame(proteinID, qssm, qupm, standardizeddataD1)
+      
+      colnames(dfdatad1) <- c("gene_name", "qssm", "qupm", Reld1)
+      #colnames(dfdatad1) <- c("protein_IDs", "qssm", "qupm", Relc1)
+      
+      #print(nrow(FilteredPlusd1))
+      FilteredPlusd12 <- dfdatad1[rowSums(FilteredPlusd1[]) > 0,]
+      
+      FilteredPlusd12$"gene_name"<-lapply(strsplit(as.character(FilteredPlusd12$"gene_name"),";"),"[",1)
+
+      
+      print(FilteredPlusd12)
+      #print(is.data.frame(FilteredPlusd12))
+      #print(nrow(FilteredPlusc12))
+      
+      
+      ad2 <- c(drug2values[1])
+      bd2 <- c(drug2values[2])
+      cd2 <- c(drug2values[3])
+      dd2 <- c(drug2values[4])
+      ed2 <- c(drug2values[5])
+      fd2 <- c(drug2values[6])
+      gd2 <- c(drug2values[7])
+      hd2 <- c(drug2values[8])
+      id2 <- c(drug2values[9])
+      jd2 <- c(drug2values[10])
+      dfd2 <- data.frame(ad2,bd2,cd2,dd2,ed2,fd2,gd2,hd2,id2,jd2)
+      #print(dfd2)
+      names(dfd2) <- c(selectedDrug_2)
+      dfd2order <- dfd2[order( dfd2[1, ], decreasing = TRUE )]
+      
+      #proteinID <- c(unlist(datafile$Protein.IDs))
+      #gene_name <- c(datafile$Gene.names)
+      
+      qssmd2 <- c(datafile$Peptides.Lysopilin_2)
+      if (is.null(qssmd2[1])) {
+        (qssmd2<-c(datafile$Peptides))
+      }
+      qupmd2 <- c(datafile$Unique.peptides.Lysopilin_2)
+      if (is.null(qupmd2[1])) {
+        (qupmd2<-c(datafile$Unique.peptides))
+      }
+      colnamesDatad2 <- colnames(dfd2order)
+      FilteredPlusd2 <- Filtered.df[, colnamesDatad2]
+      #print(FilteredPlusd2)
+      #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+      valued2order <- drug2values[order( drug2values, decreasing = TRUE)]
+      #print(valued2order)
+      Reld2 <- paste0("rel_fc_", header)
+      Standardizedcoldatad2 <- as.data.frame((FilteredPlusd2[, 1] / FilteredPlusd2[, 10]))
+      Standardizedcoldatad22 <- as.data.frame(FilteredPlusd2[, 2] / FilteredPlusd2[, 10])
+      Standardizedcoldatad23 <- as.data.frame(FilteredPlusd2[, 3] / FilteredPlusd2[, 10])
+      Standardizedcoldatad24 <- as.data.frame(FilteredPlusd2[, 4] / FilteredPlusd2[, 10])
+      Standardizedcoldatad25 <- as.data.frame(FilteredPlusd2[, 5] / FilteredPlusd2[, 10])
+      Standardizedcoldatad26 <- as.data.frame(FilteredPlusd2[, 6] / FilteredPlusd2[, 10])
+      Standardizedcoldatad27 <- as.data.frame(FilteredPlusd2[, 7] / FilteredPlusd2[, 10])
+      Standardizedcoldatad28 <- as.data.frame(FilteredPlusd2[, 8] / FilteredPlusd2[, 10])
+      Standardizedcoldatad29 <- as.data.frame(FilteredPlusd2[, 9] / FilteredPlusd2[, 10])
+      Standardizedcoldatad210 <- as.data.frame(FilteredPlusd2[, 10] / FilteredPlusd2[, 10])
+      standardizeddataD2 <- bind_cols(Standardizedcoldatad2, Standardizedcoldatad22, Standardizedcoldatad23, Standardizedcoldatad24, Standardizedcoldatad25, Standardizedcoldatad26, Standardizedcoldatad27, Standardizedcoldatad28, Standardizedcoldatad29, Standardizedcoldatad210)
+      #print(standardizeddata)
+      
+      dfdatad2 <- data.frame(gene_name, qssmd2, qupmd2, standardizeddataD2)
+      #dfdatad2 <- data.frame(proteinID, qssm, qupm, standardizeddataD2)
+
+      colnames(dfdatad2) <- c("gene_name", "qssm", "qupm", Reld2)
+      #colnames(dfdatad2) <- c("protein_IDs", "qssm", "qupm", Relc1)
+      
+      #print(nrow(FilteredPlusd2))
+      FilteredPlusd22 <- dfdatad2[rowSums(FilteredPlusd2[]) > 0,]
+      
+      FilteredPlusd22$"gene_name"<-lapply(strsplit(as.character(FilteredPlusd22$"gene_name"),";"),"[",1)
+
+      #print(FilteredPlusd22)
+      #print(is.data.frame(FilteredPlusd22))
+      #print(nrow(FilteredPlusc12))
+      
+      FullList <- bind_cols(dfdatac1,dfdatac2,dfdatad1,dfdatad2)
+      FullList <- na.omit(FullList)
+      #print(FullList)
+      FullListRows <- rownames(FullList)
+      #print(FullListRows)
+      
+      FilteredPlusC12 <- na.omit(FilteredPlusc12)
+      FilteredPlusC22 <- na.omit(FilteredPlusc22)
+      FilteredPlusD12 <- na.omit(FilteredPlusd12)
+      FilteredPlusD22 <- na.omit(FilteredPlusd22)
+      #print(FilteredPlusD22)
+      
+      rowFilterc12 <- FilteredPlusc12[FullListRows, ]
+      rowFilterc22 <- FilteredPlusc22[FullListRows, ]
+      rowFilterd12 <- FilteredPlusd12[FullListRows, ]
+      rowFilterd22 <- FilteredPlusd22[FullListRows, ]
+      #print(nrow(rowFilterc12))
+      #print(nrow(rowFilterc22))
+      #print(nrow(rowFilterd12))
+      #print(nrow(rowFilterd22))
+      #print(rowFilterc12)
+      
+      #lesserRowsc1 <- dfdatac1[1:508, ]
+      #lesserRowsc2 <- dfdatac2[1:509, ]
+      #lesserRowsd1 <- dfdatad1[1:508, ]
+      #lesserRowsd2 <- dfdatad2[1:509, ]
+      
+      
+      TR_data <- list(rowFilterc12, rowFilterc22, rowFilterd12, rowFilterd22) #Main
+      
+      #TR_data <- list(lesserRowsc1, lesserRowsc2, lesserRowsd1, lesserRowsd2)
+      
+      #TR_data <- list(FilteredPlusC12, FilteredPlusC22, FilteredPlusD12, FilteredPlusD22)
+      #TR_data <- list(dfdatac1, dfdatac2, dfdatad1, dfdatad2)  #WORKS?
+      
+      #names(TR_data) <- c("Vehicle_1", "Vehicle_2", "Panobinostat_1", "Panobinostat_2")
+      
+      names(TR_data) <- c("Vehicle_1", "Vehicle_2", Drugname11, Drugname12)
+      
+      #TR_dataFiltered <- na.omit(TR_data)
+      #print(TR_data)
+      #print(is.list(TR_data))
+      
+      dir.create(paste0(getwd(),"/Analysis"))
+      #resultPath = "C:\\Users\\dbgec\\Desktop\\Analysis"
+      resultPath = paste0(getwd(),"/Analysis")
+      #resultPath = file.path(getwd())
+      #resultPath = file.path(Sys.getenv("USERPROFILE"),"Desktop")
+      
+      ## Start the workflow
+      
+      myTppTrDefaultNormReqs<- {
+        dfFcFilters <- data.frame(fcColumn = c(4, 5, 7), thresholdLower = c(0.2, 0.1, 0.09), thresholdUpper = c(0.6, 0.3, 0.2), stringsAsFactors = FALSE)
+        dfOtherFilters <- data.frame(colName = "qssm", thresholdLower = 4,thresholdUpper = Inf, stringsAsFactors = FALSE)
+        filterCrit <- list(fcRequirements = dfFcFilters, otherRequirements = dfOtherFilters)
+        #return(filterCrit)
+      }
+      
+      #print(is.list(tpptrDefaultNormReqs()))
+      #print(is.list(myTppTrDefaultNormReqs))
+      
+      #trDataNormalized <- normResults[["normData"]]
+      #print(normResults)
+      #print(trDataNormalized)
+      
+      #print(myTppTrDefaultNormReqs)
+      #print(tpptrDefaultNormReqs())
+   
+      #print(attributes(TR_data[[1]]))
+      #print(attributes(hdacTR_data[[1]]))
+      
+      TRresults <- analyzeTPPTR(configTable = Config1,
+                                methods = "meltcurvefit",
+                                data = TR_data,
+                                nCores = "max",
+                                resultPath = resultPath,
+                                plotCurves = FALSE,
+                                normalize = TRUE,
+                                normReqs = myTppTrDefaultNormReqs,
+                                )
+      #if (is.error(TRresults))
+       # return(NULL)
+      
+      tr_targets <- subset(TRresults, fulfills_all_4_requirements)$Protein_ID
+      print(tr_targets)
+      
+      
+      trData <- tpptrImport(configTable = Config1, data = TR_data)
+      #Normalization
+      normResults <- tpptrNormalize(data = trData)
+    }
+  })
+  
+  #Selected TEMP Data ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  observeEvent(input$TR_Selected_data, {
+    #output$TR_data <- ({
+    plus4 <- c("gene_name", "qssm", "qupm", (paste0("rel_fc_", input$select_rows_selected)))
+    plus5 <- c("gene_name", "qssm", "qupm")
+    inFile <- input$file1
+    
+    if (is.null(inFile))
+      return(NULL)
+    datafile <- read.table(inFile$datapath, sep = "\t", stringsAsFactors = FALSE, header = TRUE)
+    datafile <- datafile[which(datafile$Potential.contaminant != "+"),]
+    datafile <- datafile[which(datafile$Reverse != "+"),]
+    datafile <- datafile[which(datafile$Only.identified.by.site != "+"),]
+    datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),";"),"[",1)
+    #datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),"|"),"[",2)
+    #datafile$Gene.names<-lapply(strsplit(as.character(datafile$Gene.names),";"),"[",1)
+    tokeep <- grep(pattern = "^Reporter.intensity.corrected|Unique.peptides|Peptides|Protein.IDs|site|Reverse|Potential", colnames(datafile), value = TRUE)
+    Filtered.df <- datafile[, tokeep]
+    #print(datafile$Gene.names)
+    clist <- as.data.frame(colnames(Filtered.df))
+    FilteredPlusData <- clist[input$select_rows_selected, ]
+    plus6 <- c(FilteredPlusData)
+    FilteredPlus <- clist[input$select_rows_selected, ]
+    selectedControl_1 <- grep(pattern = "Control_1", FilteredPlus, value = TRUE)
+    selectedControl_2 <- grep(pattern = "Control_2", FilteredPlus, value = TRUE) #capitalization might change
+    control1values <- lapply(strsplit(as.character(selectedControl_1),"[.]"),"[",4)
+    control1values <- as.numeric(control1values)
+    control2values <- lapply(strsplit(as.character(selectedControl_2),"[.]"),"[",4)
+    control2values <- as.numeric(control2values)
+    #print(selectedControl_1)
+    #print(selectedControl_2)
+    #print(control1values)
+    #print(control2values)
+    plus2 <- c("Experiment", (paste0("rel_fc_", input$select_rows_selected)))
+    plus4 <- c(FilteredPlus)
+    Drugname11 <- (paste0(input$DrugName1, "_1")) 
+    Drugname12 <- (paste0(input$DrugName1, "_2"))
+    selectedDrug_1 <- grep(pattern = Drugname11, FilteredPlus, value = TRUE)
+    selectedDrug_2 <- grep(pattern = Drugname12, FilteredPlus, value = TRUE)
+    drug1values <- lapply(strsplit(as.character(selectedDrug_1),"[.]"),"[",4)
+    drug1values <- as.numeric(drug1values)
+    drug2values <- lapply(strsplit(as.character(selectedDrug_2),"[.]"),"[",4)
+    drug2values <- as.numeric(drug2values)
+    #print(selectedDrug_1)
+    #print(selectedDrug_2)
+    #print(drug1values)
+    #print(drug2values)
+    plus3 <- c("Experiment", "Condition", "ComparisonVT1", "ComparisonVT2", FilteredPlus)
+    plus4 <- c(FilteredPlus)
+    plus5 <- c("Experiment", "Condition", "ComparisonVT1", "ComparisonVT2")
+    plus8 <- c("Experiment")
+  
+    
+    a <- c("Vehicle_1", "Vehicle_2", (paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+    b <- c("Vehicle", "Vehicle", "Treatment", "Treatment")
+    c <- c("x", "", "x", "")
+    d <- c("", "x", "", "x")
+    cdf <- list()
+    for (x in 1:(input$TempNumber)) {
+      cdf[[x]] <- c(control1values[x])
+    }
+    cdf <- do.call(cbind, cdf)
+    cdfc1 <- data.frame(cdf)
+    #print(cdfc1)
+    names(cdfc1) <- c(selectedControl_1)
+    cdfc1 <- cdfc1[order( cdfc1[1, ], decreasing = TRUE )]
+    valuecgorder <- drug1values[order( drug1values, decreasing = TRUE)]
+    header <- c("126", "127L", "127H", "128L", "128H", "129L", "129H", "130L", "130H", "131L")
+    names(cdfc1) <- c(header)
+    #names(cdfc1) <- c(valuecgorder)
+    namescdfc1 <- data.frame(a,b,c,d)
+    names(namescdfc1) <- c(plus5)
+    Config1 <- bind_cols(namescdfc1, cdfc1)
+    print(Config1)
+  
+    
+    dfc1 <- list()
+    for (x in 1:(input$TempNumber)) {
+      dfc1[[x]] <- c(control1values[x])
+    }
+    dfc1 <- do.call(cbind, dfc1)
+    dfc1 <- data.frame(dfc1)
+    names(dfc1) <- c(selectedControl_1)
+    dfc1order <- dfc1[order( dfc1[1, ], decreasing = TRUE )]
+    gene_name <- c(datafile$"Gene names")
+    qssm <- c(datafile$"Peptides")
+    qupm <- c(datafile$"Unique peptides")
+    #print(qupm)
+    colnamesDatac1 <- colnames(dfc1order)
+    #print(colnamesDatac1)
+    #print(Filtered.df)
+    FilteredPlusc1 <- Filtered.df[, colnamesDatac1]
+    #print(FilteredPlusd1)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valuec1order <- control1values[order( control1values, decreasing = TRUE)]
+    #print(valued1order)
+    Relc1 <- paste0("rel_fc_", header)
+    #Reld1 <- paste0("rel_fc_", valuec1order)
+    ##ref_label <- c(valuec1order[input$TempNumber])
+    Standardizedcoldatac <- list()
+    for (x in 1:(input$TempNumber)) {
+      Standardizedcoldatac[x] <- as.data.frame((FilteredPlusc1[, x] / FilteredPlusc1[, (input$TempNumber)]))
+    }
+    Standardizedcoldatac <- do.call(cbind, Standardizedcoldatac)
+    Standardizedcoldatac <- data.frame(Standardizedcoldatac)
+    #print(Standardizedcoldatac)
+    dfdatac1 <- data.frame(gene_name, qssm, qupm, Standardizedcoldatac)
+    #print(dfdatac1)
+    colnames(dfdatac1) <- c("gene_name", "qssm", "qupm", Relc1)
+    #print(nrow(FilteredPlusc1))
+    FilteredPlusc12 <- dfdatac1[rowSums(FilteredPlusc1[]) > 0,]
+    #print(FilteredPlusd12)
+    #print(is.data.frame(FilteredPlusd12))
+    #print(nrow(FilteredPlusd12))
+    FilteredPlusc12$"gene_name"<-lapply(strsplit(as.character(FilteredPlusc12$"gene_name"),";"),"[",1)
+      
+    
+    dfc2 <- list()
+    for (x in 1:(input$TempNumber)) {
+      dfc2[[x]] <- c(control2values[x])
+    }
+    dfc2 <- do.call(cbind, dfc2)
+    dfc2 <- data.frame(dfc2)
+    names(dfc2) <- c(selectedControl_2)
+    dfc2order <- dfc2[order( dfc2[1, ], decreasing = TRUE )]
+    ##gene_name <- c(datafile$"Gene names")
+    ##qssm <- c(datafile$"Peptides")
+    ##qupm <- c(datafile$"Unique peptides")
+    #print(qupm)
+    colnamesDatac2 <- colnames(dfc2order)
+    #print(colnamesDatac1)
+    #print(Filtered.df)
+    FilteredPlusc2 <- Filtered.df[, colnamesDatac2]
+    #print(FilteredPlusd1)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valuec2order <- control2values[order( control2values, decreasing = TRUE)]
+    #print(valuec2order)
+    Relc2 <- paste0("rel_fc_", header)
+    #Relc2 <- paste0("rel_fc_", valuec2order)
+    ##ref_label <- c(valuec2order[input$TempNumber])
+    Standardizedcoldatac2 <- list()
+    for (x in 1:(input$TempNumber)) {
+      Standardizedcoldatac2[x] <- as.data.frame((FilteredPlusc2[, x] / FilteredPlusc2[, (input$TempNumber)]))
+    }
+    Standardizedcoldatac2 <- do.call(cbind, Standardizedcoldatac2)
+    Standardizedcoldatac2 <- data.frame(Standardizedcoldatac2)
+    #print(Standardizedcoldatac2)
+    dfdatac2 <- data.frame(gene_name, qssm, qupm, Standardizedcoldatac2)
+    #print(dfdatac2)
+    colnames(dfdatac2) <- c("gene_name", "qssm", "qupm", Relc2)
+    #print(nrow(FilteredPlusc2))
+    FilteredPlusc22 <- dfdatac2[rowSums(FilteredPlusc2[]) > 0,]
+    #print(FilteredPlusc22)
+    #print(is.data.frame(FilteredPlusc22))
+    #print(nrow(FilteredPlusc22))
+    FilteredPlusc22$"gene_name"<-lapply(strsplit(as.character(FilteredPlusc22$"gene_name"),";"),"[",1)
+    
+    
+    dfd1 <- list()
+    for (x in 1:(input$TempNumber)) {
+      dfd1[[x]] <- c(drug1values[x])
+    }
+    dfd1 <- do.call(cbind, dfd1)
+    dfd1 <- data.frame(dfd1)
+    names(dfc1) <- c(selectedDrug_1)
+    dfd1order <- dfd1[order( dfd1[1, ], decreasing = TRUE )]
+    #gene_name <- c(datafile$"Gene names")
+    #qssm <- c(datafile$"Peptides")
+    #qupm <- c(datafile$"Unique peptides")
+    #print(qupm)
+    colnamesDatad1 <- colnames(dfd1order)
+    #print(colnamesDatac1)
+    #print(Filtered.df)
+    FilteredPlusd1 <- Filtered.df[, colnamesDatad1]
+    #print(FilteredPlusd1)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valued1order <- drug1values[order( drug1values, decreasing = TRUE)]
+    #print(valued1order)
+    Reld1 <- paste0("rel_fc_", header)
+    #Reld1 <- paste0("rel_fc_", valuec1order)
+    ##ref_label <- c(valuec1order[input$TempNumber])
+    Standardizedcoldatad <- list()
+    for (x in 1:(input$TempNumber)) {
+      Standardizedcoldatad[x] <- as.data.frame((FilteredPlusd1[, x] / FilteredPlusd1[, (input$TempNumber)]))
+    }
+    Standardizedcoldatad <- do.call(cbind, Standardizedcoldatad)
+    Standardizedcoldatad <- data.frame(Standardizedcoldatad)
+    #print(Standardizedcoldatad)
+    dfdatac1 <- data.frame(gene_name, qssm, qupm, Standardizedcoldatad)
+    #print(dfdatad1)
+    colnames(dfdatad1) <- c("gene_name", "qssm", "qupm", Reld1)
+    #print(nrow(FilteredPlusd1))
+    FilteredPlusd12 <- dfdatad1[rowSums(FilteredPlusd1[]) > 0,]
+    #print(FilteredPlusd12)
+    #print(is.data.frame(FilteredPlusd12))
+    #print(nrow(FilteredPlusd12))
+    FilteredPlusd12$"gene_name"<-lapply(strsplit(as.character(FilteredPlusd12$"gene_name"),";"),"[",1)
+    
+    
+    dfd2 <- list()
+    for (x in 1:(input$TempNumber)) {
+      dfd2[[x]] <- c(drug2values[x])
+    }
+    dfd2 <- do.call(cbind, dfd2)
+    dfd2 <- data.frame(dfd2)
+    names(dfd2) <- c(selectedDrug_2)
+    dfd2order <- dfd2[order( dfd2[1, ], decreasing = TRUE )]
+    ##gene_name <- c(datafile$"Gene names")
+    ##qssm <- c(datafile$"Peptides")
+    ##qupm <- c(datafile$"Unique peptides")
+    #print(qupm)
+    colnamesDatad2 <- colnames(dfd2order)
+    #print(colnamesDatac1)
+    #print(Filtered.df)
+    FilteredPlusd2 <- Filtered.df[, colnamesDatad2]
+    #print(FilteredPlusd2)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valued2order <- drug2values[order( drug2values, decreasing = TRUE)]
+    #print(valued2order)
+    Reld2 <- paste0("rel_fc_", header)
+    #Reld2 <- paste0("rel_fc_", valued2order)
+    ##ref_label <- c(valued2order[input$TempNumber])
+    Standardizedcoldatad2 <- list()
+    for (x in 1:(input$TempNumber)) {
+      Standardizedcoldatad2[x] <- as.data.frame((FilteredPlusd2[, x] / FilteredPlusd2[, (input$TempNumber)]))
+    }
+    Standardizedcoldatad2 <- do.call(cbind, Standardizedcoldatad2)
+    Standardizedcoldatad2 <- data.frame(Standardizedcoldatad2)
+    #print(Standardizedcoldatad2)
+    dfdatad2 <- data.frame(gene_name, qssm, qupm, Standardizedcoldatad2)
+    #print(dfdatad2)
+    colnames(dfdatad2) <- c("gene_name", "qssm", "qupm", Reld2)
+    #print(nrow(FilteredPlusc2))
+    FilteredPlusd22 <- dfdatad2[rowSums(FilteredPlusd2[]) > 0,]
+    #print(FilteredPlusd22)
+    #print(is.data.frame(FilteredPlusd22))
+    #print(nrow(FilteredPlusd22))
+    FilteredPlusd22$"gene_name"<-lapply(strsplit(as.character(FilteredPlusd22$"gene_name"),";"),"[",1)
+    
+    
+    FullList <- bind_cols(dfdatac1,dfdatac2,dfdatad1,dfdatad2)
+    FullList <- na.omit(FullList)
+    #print(FullList)
+    FullListRows <- rownames(FullList)
+    #print(FullListRows)
+    
+    FilteredPlusC12 <- na.omit(FilteredPlusc12)
+    FilteredPlusC22 <- na.omit(FilteredPlusc22)
+    FilteredPlusD12 <- na.omit(FilteredPlusd12)
+    FilteredPlusD22 <- na.omit(FilteredPlusd22)
+    #print(FilteredPlusD22)
+    
+    rowFilterc12 <- FilteredPlusc12[FullListRows, ]
+    rowFilterc22 <- FilteredPlusc22[FullListRows, ]
+    rowFilterd12 <- FilteredPlusd12[FullListRows, ]
+    rowFilterd22 <- FilteredPlusd22[FullListRows, ]
+    #print(nrow(rowFilterc12))
+    #print(nrow(rowFilterc22))
+    #print(nrow(rowFilterd12))
+    #print(nrow(rowFilterd22))
+    #print(rowFilterc12)
+    
+    #lesserRowsc1 <- dfdatac1[1:508, ]
+    #lesserRowsc2 <- dfdatac2[1:509, ]
+    #lesserRowsd1 <- dfdatad1[1:508, ]
+    #lesserRowsd2 <- dfdatad2[1:509, ]
+    
+    
+    TR_data <- list(rowFilterc12, rowFilterc22, rowFilterd12, rowFilterd22) #Main
+    
+    #TR_data <- list(lesserRowsc1, lesserRowsc2, lesserRowsd1, lesserRowsd2)
+    
+    #TR_data <- list(FilteredPlusC12, FilteredPlusC22, FilteredPlusD12, FilteredPlusD22)
+    #TR_data <- list(dfdatac1, dfdatac2, dfdatad1, dfdatad2)  #WORKS?
+    
+    #names(TR_data) <- c("Vehicle_1", "Vehicle_2", "Panobinostat_1", "Panobinostat_2")
+    
+    names(TR_data) <- c("Vehicle_1", "Vehicle_2", Drugname11, Drugname12)
+    
+    #TR_dataFiltered <- na.omit(TR_data)
+    print(TR_data)
+    #print(is.list(TR_data))
+    
+    resultPath = file.path(getwd())
+    #resultPath = file.path(Sys.getenv("USERPROFILE"),"Desktop")
+    
+    Targetfile <- input$filetarget
+    if (is.null(Targetfile))
+      return(NULL)
+    selectedgenes<-read.table(Targetfile$datapath, header = FALSE,fill=T, sep = "\t",as.is = TRUE, quote="\"", stringsAsFactors = F)
+    
+    #MAYBE FOR DIFFERENT BUTTON SINCE ANALYSIS COMES OUT AS AN ERROR AND HAULTS CODE
+    
+    #---------------------------------------------------------------
+    #run TPPCCR for identified targets
+    #---------------------------------------------------------------
+    ccrData <- tppccrImport(configTable = Config1, data = TR_data)
+    ccrDataNormalized <- tppccrNormalize(data = ccrData)
+    ccrDataTransformed_1 <- tppccrTransform(data = ccrDataNormalized)[[1]]
+    ccrDataTransformed_2 <- tppccrTransform(data = ccrDataNormalized)[[2]]
+    # ccrDataHDAC_1 <- ccrDataTransformed_1[match(ccr_targets, Biobase::featureNames(ccrDataTransformed_1)),]
+    # ccrDataHDAC_2 <- ccrDataTransformed_2[match(ccr_targets, Biobase::featureNames(ccrDataTransformed_2)),]
+    # targetdata<-list(drugrep1 = ccrDataHDAC_1,drugrep2 = ccrDataHDAC_2)
+    # names(targetdata)<- c(paste(current_drug,"1",sep="_"),paste(current_drug,"2",sep="_"))
+    # ccrDataFittedHDAC <- tppccrCurveFit(data=targetdata, nCores = 1)
+    # tppccrPlotCurves(ccrDataFittedHDAC, resultPath = resultPath, nCores = 1)
+    # ccrResultsHDAC <- tppccrResultTable(ccrDataFittedHDAC)
+    # print(ccrResultsHDAC[,c(1, 22:25)])
+    
+    #---------------------------------------------------------------
+    #do curve fitting and plotting for your selected targets
+    #---------------------------------------------------------------
+    selected_ccrDataProtein_1 <- ccrDataTransformed_1[match(selectedgenes$V1, Biobase::featureNames(ccrDataTransformed_1)),]
+    selected_ccrDataProtein_2 <- ccrDataTransformed_2[match(selectedgenes$V1, Biobase::featureNames(ccrDataTransformed_2)),]
+    selected_targetdata<-list(drugrep1 = selected_ccrDataProtein_1,drugrep2 = selected_ccrDataProtein_2)
+    names(selected_targetdata)<- c(paste0(input$DrugName1,"1",sep="_"),paste0(input$DrugName1,"2",sep="_"))
+    selected_ccrDataFittedProtein <- tppccrCurveFit(data=selected_targetdata, nCores = 2)
+    tppccrPlotCurves(selected_ccrDataFittedProtein, resultPath = resultPath, nCores = 2)
+    #selected_ccrResultsHDAC <- tppccrResultTable(selected_ccrDataFittedHDAC)
+    #print(selected_ccrResultsHDAC[,c(1, 22:25)])
+    
+  })
+  
+  # Analyze DRUG Data ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  
+  observeEvent(input$CCR_data, {
+    withProgress(message = 'Analyzing Data', value = 0, {
+      for (i in 1:1) {
+    #output$TR_data <- ({
+    plus4 <- c("gene_name", "qssm", "qupm", (paste0("rel_fc_", input$select_rows_selected)))
+    plus5 <- c("gene_name", "qssm", "qupm")
+    inFile <- input$file1
+    
+    if (is.null(inFile))
+      return(NULL)
+    datafile <- read.table(inFile$datapath, sep = "\t", stringsAsFactors = FALSE, header = TRUE, check.names = FALSE)
+    datafile <- datafile[which(datafile$"Potential contaminant" != "+"),]
+    datafile <- datafile[which(datafile$"Reverse" != "+"),]
+    datafile <- datafile[which(datafile$"Only identified by site" != "+"),]
+    datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$"Protein IDs"),";"),"[",1)
+    #datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),"|"),"[",2)
+    tokeep <- grep(pattern = "^Reporter intensity corrected|Unique peptides|Peptides|Protein IDs|site|Reverse|Potential", colnames(datafile), value = TRUE)
+    Filtered.df <- datafile[, tokeep]
+    #print(Filtered.df)
+    clist <- as.data.frame(colnames(Filtered.df))
+    FilteredPlusData <- clist[input$select_rows_selected, ]
+    plus6 <- c(FilteredPlusData)
+    FilteredPlus <- clist[input$select_rows_selected, ]
+    plus2 <- c("Experiment", (paste0("rel_fc_", input$select_rows_selected)))
+    plus4 <- c(FilteredPlus)
+    current_drug <- input$DrugName1
+    Drugname11 <- (paste0(input$DrugName1, "_1")) 
+    Drugname12 <- (paste0(input$DrugName1, "_2"))
+    selectedDrug_1 <- grep(pattern = Drugname11, FilteredPlus, value = TRUE)
+    selectedDrug_2 <- grep(pattern = Drugname12, FilteredPlus, value = TRUE)
+    drug1values <- lapply(strsplit(as.character(selectedDrug_1),"[ ]"),"[",4)
+    drug1values <- as.numeric(drug1values)
+    drug2values <- lapply(strsplit(as.character(selectedDrug_2),"[ ]"),"[",4)
+    drug2values <- as.numeric(drug2values)
+    print(selectedDrug_1)
+    #print(selectedDrug_2)
+    #print(drug1values)
+    #print(drug2values)
+    plus3 <- c("Experiment", "Condition", "ComparisonVT1", "ComparisonVT2", FilteredPlus)
+    plus4 <- c(FilteredPlus)
+    plus5 <- c("Experiment")
+    
+    
+    a <- c((paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+    df <- list()
+    for (x in 1:(input$ConcNumber)) {
+      df[[x]] <- c(drug1values[x])
+    }
+    df <- do.call(cbind, df)
+    cdfc1 <- data.frame(df)
+    #print(cdfc1)
+    names(cdfc1) <- c(selectedDrug_1)
+    cdfc1 <- cdfc1[order( cdfc1[1, ], decreasing = TRUE )]
+    valuecgorder <- drug1values[order( drug1values, decreasing = TRUE)]
+    names(cdfc1) <- c(valuecgorder)
+    namescdfc1 <- data.frame(a)
+    names(namescdfc1) <- c(plus5)
+    Config1 <- bind_cols(namescdfc1, cdfc1)
+    #print(Config1)
+    
+    
+    dfc1 <- list()
+    for (x in 1:(input$ConcNumber)) {
+      dfc1[[x]] <- c(drug1values[x])
+    }
+    dfc1 <- do.call(cbind, dfc1)
+    dfd1 <- data.frame(dfc1)
+    names(dfd1) <- c(selectedDrug_1)
+    dfd1order <- dfd1[order( dfd1[1, ], decreasing = TRUE )]
+    gene_name <- c(datafile$"Gene names")
+    qssm <- c(datafile$"Peptides")
+    qupm <- c(datafile$"Unique peptides")
+    #print(qupm)
+    colnamesDatad1 <- colnames(dfd1order)
+    #print(colnamesDatad1)
+    #print(Filtered.df)
+    FilteredPlusd1 <- Filtered.df[, colnamesDatad1]
+    #print(FilteredPlusd1)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valued1order <- drug1values[order( drug1values, decreasing = TRUE)]
+    #print(valued1order)
+    Reld1 <- paste0("rel_fc_", valued1order)
+    ref_label <- c(valued1order[input$ConcNumber])
+    Standardizedcoldatad <- list()
+    for (x in 1:(input$ConcNumber)) {
+      Standardizedcoldatad[x] <- as.data.frame((FilteredPlusd1[, x] / FilteredPlusd1[, (input$ConcNumber)]))
+    }
+    Standardizedcoldatad <- do.call(cbind, Standardizedcoldatad)
+    Standardizedcoldatad <- data.frame(Standardizedcoldatad)
+    #print(Standardizedcoldatad)
+    dfdatad1 <- data.frame(gene_name, qssm, qupm, ref_label, Standardizedcoldatad)
+    #print(dfdatad1)
+    colnames(dfdatad1) <- c("gene_name", "qssm", "qupm", "reference_label", Reld1)
+    #print(nrow(FilteredPlusd1))
+    FilteredPlusd12 <- dfdatad1[rowSums(FilteredPlusd1[]) > 0,]
+    #print(FilteredPlusd12)
+    #print(is.data.frame(FilteredPlusd12))
+    #print(nrow(FilteredPlusd12))
+    FilteredPlusd12$"gene_name"<-lapply(strsplit(as.character(FilteredPlusd12$"gene_name"),";"),"[",1)
+    
+    
+    dfc2 <- list()
+    for (x in 1:(input$ConcNumber)) {
+      dfc2[[x]] <- c(drug2values[x])
+    }
+    dfc2 <- do.call(cbind, dfc2)
+    dfd2 <- data.frame(dfc2)
+    #print(dfd2)
+    names(dfd2) <- c(selectedDrug_2)
+    dfd2order <- dfd2[order( dfd2[1, ], decreasing = TRUE )]
+    #gene_name <- c(datafile$"Gene names")
+    #qssm <- c(datafile$"Peptides")
+    #qupm <- c(datafile$"Unique peptides")
+    colnamesDatad2 <- colnames(dfd2order)
+    FilteredPlusd2 <- Filtered.df[, colnamesDatad2]
+    #print(FilteredPlusd2)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valued2order <- drug2values[order( drug2values, decreasing = TRUE)]
+    #print(valued2order)
+    Reld2 <- paste0("rel_fc_", valued2order)
+    Standardizedcoldatad2 <- list()
+    for (x in 1:(input$ConcNumber)) {
+      Standardizedcoldatad2[x] <- as.data.frame((FilteredPlusd2[, x] / FilteredPlusd2[, (input$ConcNumber)]))
+    }
+    Standardizedcoldatad2 <- do.call(cbind, Standardizedcoldatad2)
+    Standardizedcoldatad2 <- data.frame(Standardizedcoldatad2)
+    dfdatad2 <- data.frame(gene_name, qssm, qupm, Standardizedcoldatad2)
+    colnames(dfdatad2) <- c("gene_name", "qssm", "qupm", Reld2)
+    #print(nrow(FilteredPlusd2))
+    FilteredPlusd22 <- dfdatad2[rowSums(FilteredPlusd2[]) > 0,]
+    #print(FilteredPlusd22)
+    #print(is.data.frame(FilteredPlusd22))
+    #print(nrow(FilteredPlusc12))
+    FilteredPlusd22$"gene_name"<-lapply(strsplit(as.character(FilteredPlusd22$"gene_name"),";"),"[",1)
+    
+    
+    FullList <- bind_cols(dfdatad1,dfdatad2)
+    FullList <- na.omit(FullList)
+    #print(FullList)
+    FullListRows <- rownames(FullList)
+    #print(FullListRows)
+    
+    FilteredPlusD12 <- na.omit(FilteredPlusd12)
+    FilteredPlusD22 <- na.omit(FilteredPlusd22)
+    #print(FilteredPlusD22)
+    
+    rowFilterd12 <- FilteredPlusd12[FullListRows, ]
+    rowFilterd22 <- FilteredPlusd22[FullListRows, ]
+    #print(nrow(rowFilterd12))
+    #print(nrow(rowFilterd22))
+    #print(rowFilterc12)
+    
+    NormReqs <- function (){
+      dfFcFiltered1 <- rowFilterc12(colName = "qssm", thresholdLower = 4, thresholdUpper = Inf, stringsAsFactors = FALSE)
+      #print(dfFcFiltered1)
+    }
+    
+    CR_data <- list(rowFilterd12, rowFilterd22)
+    #CR_data <- list(FilteredPlusD12, FilteredPlusD22)
+    #CR_data <- list(dfdatad1, dfdatad2)
+    names(CR_data) <- c(Drugname11, Drugname12)
+    #CR_dataFiltered <- na.omit(TR_data)
+    #print(CR_data)
+    #print(is.list(CR_data))
+    #print(nrow(rowFilterd12))
+    #print(nrow(rowFilterd22))
+    #print(ncol(rowFilterd12))
+    #print(ncol(rowFilterd22))
+    
+    #print(Config1[1,])
+    #print(CR_data[[1]])
+    
+    #path1 <- Sys.getenv("USERPROFILE")
+    #path2 <- paste0(path1, "Desktop", "Analysis")
+    #dir.create(path2)
+    #resultPath = path2
+    #resultPath = system(file.path(Sys.getenv("USERPROFILE"),"Desktop","Analysis"))
+    dir.create(paste0(getwd(),"/Analysis"))
+    #resultPath = "C:\\Users\\dbgec\\Desktop\\Analysis"
+    resultPath = paste0(getwd(),"/Analysis")
+    
+    CCRresults <- analyzeTPPCCR(configTable = Config1,
+                                data = CR_data,
+                                resultPath = resultPath,
+                                plotCurves = FALSE,
+                                nCores = 2,
+                                verbose = TRUE)
+    #print(CCRresults)
+    
+    ## Proteins that display a clear response to treatment
+    ccr_targets1 <- subset(CCRresults, passed_filter_Compound_A_1)$Protein_ID
+    #print(ccr_targets1)
+    ccr_targets2 <- subset(CCRresults, passed_filter_Compound_A_2)$Protein_ID
+    #print(ccr_targets2)
+    ccr_targets <- intersect(ccr_targets1,ccr_targets2)
+    #print(ccr_targets)
+    Proteins_That_Passed_The_Filtering <- ccr_targets
+    ccr_targets_df <- data.frame(Proteins_That_Passed_The_Filtering)
+    output$passed_data_ccr <- renderDataTable({ccr_targets_df}, rownames=FALSE)
+    
+    path5 <- paste0(getwd(), "/Passed_Data.csv")
+    write.csv(ccr_targets_df, path5, row.names = FALSE) #STORED IN FILE FOLDER
+    
+    
+    resultfolders <- c("Targets", "Stringent", "Relaxed")
+    toplot <-list()
+    
+    passed.filter.rep1<-paste0("passed_filter_",current_drug, "_1")
+    passed.filter.rep2 <- paste0("passed_filter_",current_drug,"_2")
+    compound.effect.rep1 <- paste0("compound_effect_",current_drug,"_1")
+    compound.effect.rep2 <- paste0("compound_effect_",current_drug,"_2")
+    
+    stringent_ccr_targets <- subset(CCRresults, CCRresults[,passed.filter.rep1] & CCRresults[,passed.filter.rep2] & CCRresults[,compound.effect.rep1] == CCRresults[,compound.effect.rep2])$Protein_ID
+    relaxed_ccr_targets <- subset(CCRresults, CCRresults[,passed.filter.rep1] | CCRresults[,passed.filter.rep2] )$Protein_ID
+    #print(stringent_ccr_targets)
+    #print(relaxed_ccr_targets)
+    
+    print(1)   
+    ## Proteins that display a clear response to treatment
+    #ccr_targets <- subset(CCRresults, passed_filter_Compound_A_1)$Protein_ID   #PASSED_FILTER_CHANGE MAYBE
+    #print(ccr_targets)
+    
+    ##Targetfile <- input$filetarget
+    ##if (is.null(Targetfile))
+    ##  return(NULL)
+    ##selectedproteins<-read.table(Targetfile$datapath, header = FALSE,fill=T, sep = "\t",as.is = TRUE, quote=",", stringsAsFactors = FALSE)
+    #print(selectedproteins)
+    ##proteinlist<-paste(unlist(selectedproteins), collapse = "|")
+    #print(proteinlist)
+    
+    ##toplot <- list("DrugTargets" = selectedproteins$V1)
+    print(2)
+    ##print(toplot)
+    ##if (length(stringent_ccr_targets) > 0){
+    ##  toplot[["Stringent"]] <- stringent_ccr_targets
+    ##}
+    #print(toplot[["stringent"]])
+    ##if (length(relaxed_ccr_targets) > 0) {
+    ##  toplot[["Relaxed"]] <- relaxed_ccr_targets
+    ##}
+    #print(toplot[["relaxed"]])
+    print(3)
+    ## Drug Targets
+    ##drug_targets <- grep(proteinlist, ccr_targets, value = TRUE)
+    #print(drug_targets)
+    
+    ## Individual Steps in the wokrflow
+    ccrData <- tppccrImport(configTable = Config1, data = CR_data)
+    #print(ccrData)
+    
+    ## Data Normalization
+    ccrDataNormalized <- tppccrNormalize(data = ccrData)
+    #print(ccrDataNormalized)
+    
+    ## Data Transformation
+    ccrDataTransformed_1 <- tppccrTransform(data = ccrDataNormalized)[[1]]
+    ccrDataTransformed_2 <- tppccrTransform(data = ccrDataNormalized)[[2]]
+    #print(ccrDataTransformed_1)
+    #print(ccrDataTransformed_2)
+    print(4)
+    #for (j in 1:length(toplot)) {
+    
+    #  path3 <- paste0(path1, "Desktop", "DrugCurve")
+    #  dir.create(path3)
+    #  resultPath2 = path3  
+    #resultPath = file.path(getwd(), paste(current_drug,"CCR_normref",names(toplot)[j],format(Sys.time(),'%b_%d_%Y'),sep = "_"))
+    dir.create(paste0(getwd(),"/DrugCurve"))
+    resultPath2 = paste0(getwd(),"/DrugCurve")
+    #resultPath2 = file.path(Sys.getenv("USERPROFILE"),"Desktop","DrugCurve")
+    ##resultPath2 = "C:\\Users\\dbgec\\Desktop\\DrugCurve"  
+    #ccr_targets <- toplot[[j]]
+    print(5)    
+    #Dose Response Curve Fitting
+    ccrDataRep_1 <- ccrDataTransformed_1[match(ccr_targets, Biobase::featureNames(ccrDataTransformed_1)),]
+    #print(ccrDataRep_1)
+    ccrDataRep_2 <- ccrDataTransformed_2[match(ccr_targets, Biobase::featureNames(ccrDataTransformed_2)),]
+    #print(ccrDataRep_2)
+    targetdata <- list(drugrep1 = ccrDataRep_1,drugrep2 = ccrDataRep_2)
+    names(targetdata) <- c(paste(current_drug,"1",sep = "_"),paste(current_drug,"2",sep = "_"))
+    ccrDataFitted <- tppccrCurveFit(data = targetdata, nCores = 2)
+    tppccrPlotCurves(ccrDataFitted, resultPath = resultPath2, nCores = 2)
+    print(6)    
+    #Tabular Results
+    #ccrResultsHDAC <- tppccrResultTable(ccrDataFitted) #cannot allocate vector size of 9.5 Gb
+    #print(ccrResultsHDAC[,c(1, 22:25)])
+    print(7)    
+    ## Dose Response Curve Fitting
+    #ccrDataRep1 <- ccrDataTransformed_1[match(drug_targets, Biobase::featureNames(ccrDataTransformed_1)),]
+    #ccrDataRep2 <- ccrDataTransformed_2[match(drug_targets, Biobase::featureNames(ccrDataTransformed_2)),]
+    
+    #print(ccrDataRep1)
+    #ccrDataFittedProtein <- tppccrCurveFit(data=list(Compound_A_1 = ccrDataProtein), nCores = "max")  #CAN GIVE ERROR OF NO CURVES FITTED
+    
+    ## Tabular Results
+    #ccrResultsProtein <- tppccrResultTable(ccrDataFittedProtein)
+    #print(ccrResultsProtein[,c(1, 22:25)])
+    #}
+    
+    incProgress(1/1)
+    Sys.sleep(0.1)
+      }
+    })
+  })
+  
+  #Export Table of Selected Data with Either Temperature or Concentration
+  output$table_export <- downloadHandler(
+   filename = function() {
+     paste(output$selected_plus, ".csv", sep = "")
+   },
+   content = function(file) {
+     write.csv(selected_plusOutput(), file, row.names = FALSE)
+   }
+  )
+  
+  output$dwnld_passed <- downloadHandler(
+    filename = function() {
+      #paste(output$passed_data, ".xlsx", sep = "")
+    "Passed_Data.csv"
+    },
+    content = function(file) {
+      #write_xlsx(output$passed_data, file)
+      file.copy("Passed_Data.csv", file)
+    },
+    contentType = "application/zip"
+  )
+
+  #Download Doseresponse Curves
+  #file <- reactiveValues(c(
+    #selected_cell <- input$passed_data_rows_selected,
+    #value <- selected_cell$value,
+    #drug_curve_file <- paste0("drCurve_", value, ".pdf"),
+    #specific_path <- paste0(getwd(),"/DrugCurve/",drug_curve_file)
+  #))
+  #print(file)
+  output$downloadCurves <- downloadHandler(
+    filename = function() {paste0(getwd(),"/DrugCurve/DoseResponse_Curves/drCurve_",((input$passed_data_ccr_cell_clicked)$value),".pdf")},
+    content = function(file) {
+      file.copy("DrugCurve.pdf", file)
+      #cairo_pdf(filename = file,
+      #          width = 18, height = 10, pointsize = 12, family = "sans", bg = "transparent",
+      #          antialias = "subpixel",fallback_resolution = 300)
+      #plot(faithful)
+      #dev.off()
+    },
+    contentType = "application/pdf"
+  )
+  
+  observeEvent(input$generate_ccr, {
+    clicked_cell <- input$passed_data_ccr_cell_clicked
+    value <- clicked_cell$value
+    drug_curve_file <- paste0("drCurve_", value, ".pdf")
+    #specific_path <- paste0(getwd(),"/DrugCurve/DoseResponse_Curves/",drug_curve_file)
+    #specific_path2 <- paste0(getwd(),"/DrugCurve/DoseResponse_Curves")
+    #addResourcePath(prefix = 'drugcurve', directoryPath = (paste0(getwd(),"/DatatableExample/www/DrugCurve/DoseResponse_Curves")))
+    file.copy(from = (paste0(getwd(),"/DrugCurve/DoseResponse_Curves/",drug_curve_file)), to = (paste0(getwd(),"/www")), recursive = FALSE, copy.mode = TRUE)
+    print(list.files((paste0(getwd(),"/www")), recursive = TRUE, full.names = TRUE))
+    output$pdfview <- renderUI({
+      tags$iframe(style="height:600px; width:100%", src=(drug_curve_file)) #HERE IS THE STUFF paste0(getwd(),"/www/",drug_curve_file)  #file.copy(from = "C:/Users/dbgec/Documents/Shiny/DatatableExample/www/DrugCurve/DoseResponse_Curves/drCurve_BTF3.pdf", to = "C:/Users/dbgec/Documents/Shiny/DatatableExample/www", recursive = FALSE, copy.mode = TRUE)
+    })
+  })
+  
+  observeEvent(input$generate_tr, {
+    clicked_cell <- input$passed_data_tr_cell_clicked
+    value <- clicked_cell$value
+    drug_curve_file <- paste0("meltCurve_", value, ".pdf")
+    #specific_path <- paste0(getwd(),"/DrugCurve/DoseResponse_Curves/",drug_curve_file)
+    #specific_path2 <- paste0(getwd(),"/DrugCurve/DoseResponse_Curves")
+    #addResourcePath(prefix = 'drugcurve', directoryPath = (paste0(getwd(),"/DatatableExample/www/DrugCurve/DoseResponse_Curves")))
+    file.copy(from = (paste0(getwd(),"/MeltCurve/Melting_Curves/",drug_curve_file)), to = (paste0(getwd(),"/www")), recursive = FALSE, copy.mode = TRUE)
+    print(list.files((paste0(getwd(),"/www")), recursive = TRUE, full.names = TRUE))
+    output$pdfview <- renderUI({
+      tags$iframe(style="height:600px; width:100%", src=(drug_curve_file)) #HERE IS THE STUFF paste0(getwd(),"/www/",drug_curve_file)  #file.copy(from = "C:/Users/dbgec/Documents/Shiny/DatatableExample/www/DrugCurve/DoseResponse_Curves/drCurve_BTF3.pdf", to = "C:/Users/dbgec/Documents/Shiny/DatatableExample/www", recursive = FALSE, copy.mode = TRUE)
+    })
+  })
+  
+  #Analysis Datatable Clicked Event
+  observeEvent(input$passed_data_cell_clicked, {
+    #print(input$passed_data_cell_clicked)
+    clicked_cell <- input$passed_data_cell_clicked
+    value <- clicked_cell$value
+    drug_curve_file <- paste0("drCurve_", value, ".pdf")
+    #print(value)
+    #print(drug_curve_file)
+    #main_path <- system(Sys.getenv("USERPROFILE"))
+    #print(main_path)
+    #main_path2 <- system(paste(Sys.getenv("USERPROFILE")))
+    #print(main_path2)
+    #specific_path <- paste0("C:\\Users\\dbgec\\Desktop\\DrugCurve\\DoseResponse_Curves\\", drug_curve_file)
+    specific_path <- paste0(getwd(),"/DrugCurve/DoseResponse_Curves/",drug_curve_file)
+    specific_path2 <- paste0(getwd(),"/DrugCurve/DoseResponse_Curves")
+    #print(specific_path)
+    if (!is.null(value)) {
+      print(list.files(specific_path2, recursive = TRUE, full.names = TRUE))
+    shell.exec(specific_path)
+    print({paste0(getwd(),"/DrugCurve/DoseResponse_Curves/drCurve_",((input$passed_data_cell_clicked)$value),".pdf")})
+    #shell.exec("drCurve_BTF3.pdf")
+    }
+    #shell.exec(drug_curve_file)
+    #shell.exec(Sys.getenv("USERPROFILE"),"Desktop","DrugCurve","DoseResponse_Curves","drCurve_BTF3")
+    #shell.exec("C:/Users/dbgec/Desktop/DrugCurve/DoseResponse_Curves/drCurve_BTF3.pdf")
+  })
+  
+  
+  #Selected DRUG Data ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  
+  observeEvent(input$CR_Selected_data, {
+    withProgress(message = 'Analyzing Data', value = 0, {
+      for (i in 1:1) {
+    #output$TR_data <- ({
+    plus4 <- c("gene_name", "qssm", "qupm", (paste0("rel_fc_", input$select_rows_selected)))
+    plus5 <- c("gene_name", "qssm", "qupm")
+    inFile <- input$file1
+    
+    if (is.null(inFile))
+      return(NULL)
+    datafile <- read.table(inFile$datapath, sep = "\t", stringsAsFactors = FALSE, header = TRUE, check.names = FALSE)
+    datafile <- datafile[which(datafile$"Potential contaminant" != "+"),]
+    datafile <- datafile[which(datafile$Reverse != "+"),]
+    datafile <- datafile[which(datafile$"Only identified by site" != "+"),]
+    datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$"Protein IDs"),";"),"[",1)
+    #datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),"|"),"[",2)
+    tokeep <- grep(pattern = "^Reporter intensity corrected|Unique peptides|Peptides|Protein IDs|site|Reverse|Potential", colnames(datafile), value = TRUE)
+    Filtered.df <- datafile[, tokeep]
+    #print(Filtered.df)
+    clist <- as.data.frame(colnames(Filtered.df))
+    FilteredPlusData <- clist[input$select_rows_selected, ]
+    plus6 <- c(FilteredPlusData)
+    FilteredPlus <- clist[input$select_rows_selected, ]
+    plus2 <- c("Experiment", (paste0("rel_fc_", input$select_rows_selected)))
+    plus4 <- c(FilteredPlus)
+    Drugname11 <- (paste0(input$DrugName1, "_1")) 
+    Drugname12 <- (paste0(input$DrugName1, "_2"))
+    selectedDrug_1 <- grep(pattern = Drugname11, FilteredPlus, value = TRUE)
+    selectedDrug_2 <- grep(pattern = Drugname12, FilteredPlus, value = TRUE)
+    drug1values <- lapply(strsplit(as.character(selectedDrug_1),"[ ]"),"[",4)
+    drug1values <- as.numeric(drug1values)
+    drug2values <- lapply(strsplit(as.character(selectedDrug_2),"[ ]"),"[",4)
+    drug2values <- as.numeric(drug2values)
+    #print(selectedDrug_1)
+    #print(selectedDrug_2)
+    #print(drug1values)
+    #print(drug2values)
+    plus3 <- c("Experiment", "Condition", "ComparisonVT1", "ComparisonVT2", FilteredPlus)
+    plus4 <- c(FilteredPlus)
+    plus5 <- c("Experiment")
+    
+    
+    a <- c((paste0(input$DrugName1, "_1")), (paste0(input$DrugName1, "_2")))
+    df <- list()
+    for (x in 1:(input$ConcNumber)) {
+      df[[x]] <- c(drug1values[x])
+    }
+    df <- do.call(cbind, df)
+    cdfc1 <- data.frame(df)
+    #print(cdfc1)
+    names(cdfc1) <- c(selectedDrug_1)
+    cdfc1 <- cdfc1[order( cdfc1[1, ], decreasing = TRUE )]
+    valuecgorder <- drug1values[order( drug1values, decreasing = TRUE)]
+    names(cdfc1) <- c(valuecgorder)
+    namescdfc1 <- data.frame(a)
+    names(namescdfc1) <- c(plus5)
+    Config1 <- bind_cols(namescdfc1, cdfc1)
+    #print(Config1)
+    
+    
+    dfc1 <- list()
+    for (x in 1:(input$ConcNumber)) {
+      dfc1[[x]] <- c(drug1values[x])
+    }
+    dfc1 <- do.call(cbind, dfc1)
+    dfd1 <- data.frame(dfc1)
+    names(dfd1) <- c(selectedDrug_1)
+    dfd1order <- dfd1[order( dfd1[1, ], decreasing = TRUE )]
+    gene_name <- c(datafile$"Gene names")
+    qssm <- c(datafile$"Peptides")
+    qupm <- c(datafile$"Unique peptides")
+    #print(qupm)
+    colnamesDatad1 <- colnames(dfd1order)
+    #print(colnamesDatad1)
+    #print(Filtered.df)
+    FilteredPlusd1 <- Filtered.df[, colnamesDatad1]
+    #print(FilteredPlusd1)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valued1order <- drug1values[order( drug1values, decreasing = TRUE)]
+    #print(valued1order)
+    Reld1 <- paste0("rel_fc_", valued1order)
+    ref_label <- c(valued1order[input$ConcNumber])
+    Standardizedcoldatad <- list()
+    for (x in 1:(input$ConcNumber)) {
+      Standardizedcoldatad[x] <- as.data.frame((FilteredPlusd1[, x] / FilteredPlusd1[, (input$ConcNumber)]))
+    }
+    Standardizedcoldatad <- do.call(cbind, Standardizedcoldatad)
+    Standardizedcoldatad <- data.frame(Standardizedcoldatad)
+    #print(Standardizedcoldatad)
+    dfdatad1 <- data.frame(gene_name, qssm, qupm, ref_label, Standardizedcoldatad)
+    #print(dfdatad1)
+    colnames(dfdatad1) <- c("gene_name", "qssm", "qupm", "reference_label", Reld1)
+    #print(nrow(FilteredPlusd1))
+    FilteredPlusd12 <- dfdatad1[rowSums(FilteredPlusd1[]) > 0,]
+    #print(FilteredPlusd12)
+    #print(is.data.frame(FilteredPlusd12))
+    #print(nrow(FilteredPlusd12))
+    FilteredPlusd12$"gene_name"<-lapply(strsplit(as.character(FilteredPlusd12$"gene_name"),";"),"[",1)
+    
+    
+    dfc2 <- list()
+    for (x in 1:(input$ConcNumber)) {
+      dfc2[[x]] <- c(drug2values[x])
+    }
+    dfc2 <- do.call(cbind, dfc2)
+    dfd2 <- data.frame(dfc2)
+    #print(dfd2)
+    names(dfd2) <- c(selectedDrug_2)
+    dfd2order <- dfd2[order( dfd2[1, ], decreasing = TRUE )]
+    #gene_name <- c(datafile$"Gene names")
+    #qssm <- c(datafile$"Peptides")
+    #qupm <- c(datafile$"Unique peptides")
+    colnamesDatad2 <- colnames(dfd2order)
+    FilteredPlusd2 <- Filtered.df[, colnamesDatad2]
+    #print(FilteredPlusd2)
+    #FilteredPlus <- Filtered.df[, input$select_rows_selected]
+    valued2order <- drug2values[order( drug2values, decreasing = TRUE)]
+    #print(valued2order)
+    Reld2 <- paste0("rel_fc_", valued2order)
+    Standardizedcoldatad2 <- list()
+    for (x in 1:(input$ConcNumber)) {
+      Standardizedcoldatad2[x] <- as.data.frame((FilteredPlusd2[, x] / FilteredPlusd2[, (input$ConcNumber)]))
+    }
+    Standardizedcoldatad2 <- do.call(cbind, Standardizedcoldatad2)
+    Standardizedcoldatad2 <- data.frame(Standardizedcoldatad2)
+    dfdatad2 <- data.frame(gene_name, qssm, qupm, Standardizedcoldatad2)
+    colnames(dfdatad2) <- c("gene_name", "qssm", "qupm", Reld2)
+    #print(nrow(FilteredPlusd2))
+    FilteredPlusd22 <- dfdatad2[rowSums(FilteredPlusd2[]) > 0,]
+    #print(FilteredPlusd22)
+    #print(is.data.frame(FilteredPlusd22))
+    #print(nrow(FilteredPlusc12))
+    FilteredPlusd22$"gene_name"<-lapply(strsplit(as.character(FilteredPlusd22$"gene_name"),";"),"[",1)
+    
+    
+    FullList <- bind_cols(dfdatad1,dfdatad2)
+    FullList <- na.omit(FullList)
+    #print(FullList)
+    FullListRows <- rownames(FullList)
+    #print(FullListRows)
+    
+    FilteredPlusD12 <- na.omit(FilteredPlusd12)
+    FilteredPlusD22 <- na.omit(FilteredPlusd22)
+    #print(FilteredPlusD22)
+    
+    rowFilterd12 <- FilteredPlusd12[FullListRows, ]
+    rowFilterd22 <- FilteredPlusd22[FullListRows, ]
+    #print(nrow(rowFilterd12))
+    #print(nrow(rowFilterd22))
+    #print(rowFilterc12)
+    
+    NormReqs <- function (){
+      dfFcFiltered1 <- rowFilterc12(colName = "qssm", thresholdLower = 4, thresholdUpper = Inf, stringsAsFactors = FALSE)
+      print(dfFcFiltered1)
+    }
+    
+    CR_data <- list(rowFilterd12, rowFilterd22)
+    #CR_data <- list(FilteredPlusD12, FilteredPlusD22)
+    #CR_data <- list(dfdatad1, dfdatad2)
+    names(CR_data) <- c(Drugname11, Drugname12)
+    #CR_dataFiltered <- na.omit(TR_data)
+    #print(CR_data)
+    #print(is.list(CR_data))
+    #print(nrow(rowFilterd12))
+    #print(nrow(rowFilterd22))
+    #print(ncol(rowFilterd12))
+    #print(ncol(rowFilterd22))
+    
+    #print(Config1[1,])
+    #print(CR_data[[1]])
+    
+    Targetfile <- input$filetarget
+    if (is.null(Targetfile))
+      return(NULL)
+    selectedgenes<-read.table(Targetfile$datapath, header = FALSE,fill=T, sep = "\t",as.is = TRUE, quote="\"", stringsAsFactors = F)
+    
+    #MAYBE FOR DIFFERENT BUTTON SINCE ANALYSIS COMES OUT AS AN ERROR AND HAULTS CODE
+    
+    #---------------------------------------------------------------
+    #run TPPCCR for identified targets
+    #---------------------------------------------------------------
+    ccrData <- tppccrImport(configTable = Config1, data = CR_data)
+    ccrDataNormalized <- tppccrNormalize(data = ccrData) # Normalize to Reference Function?
+    ccrDataTransformed_1 <- tppccrTransform(data = ccrDataNormalized)[[1]]
+    ccrDataTransformed_2 <- tppccrTransform(data = ccrDataNormalized)[[2]]
+    # ccrDataHDAC_1 <- ccrDataTransformed_1[match(ccr_targets, Biobase::featureNames(ccrDataTransformed_1)),]
+    # ccrDataHDAC_2 <- ccrDataTransformed_2[match(ccr_targets, Biobase::featureNames(ccrDataTransformed_2)),]
+    # targetdata<-list(drugrep1 = ccrDataHDAC_1,drugrep2 = ccrDataHDAC_2)
+    # names(targetdata)<- c(paste(current_drug,"1",sep="_"),paste(current_drug,"2",sep="_"))
+    # ccrDataFittedHDAC <- tppccrCurveFit(data=targetdata, nCores = 1)
+    # tppccrPlotCurves(ccrDataFittedHDAC, resultPath = resultPath, nCores = 1)
+    # ccrResultsHDAC <- tppccrResultTable(ccrDataFittedHDAC)
+    # print(ccrResultsHDAC[,c(1, 22:25)])
+    
+    #---------------------------------------------------------------
+    #do curve fitting and plotting for your selected targets
+    #---------------------------------------------------------------
+    selected_ccrDataProtein_1 <- ccrDataTransformed_1[match(selectedgenes$V1, Biobase::featureNames(ccrDataTransformed_1)),]
+    selected_ccrDataProtein_2 <- ccrDataTransformed_2[match(selectedgenes$V1, Biobase::featureNames(ccrDataTransformed_2)),]
+    selected_targetdata<-list(drugrep1 = selected_ccrDataProtein_1,drugrep2 = selected_ccrDataProtein_2)
+    names(selected_targetdata)<- c((input$DrugName11),(input$DrugName12))
+    selected_ccrDataFittedProtein <- tppccrCurveFit(data=selected_targetdata, nCores = "max") #CAN GIVE ERROR THAT NO SAMPLES SHOW MINIMUM FOLD CHANGE CUT OFF
+    tppccrPlotCurves(selected_ccrDataFittedProtein, resultPath = resultPath, nCores = "max")
+    #selected_ccrResultsHDAC <- tppccrResultTable(selected_ccrDataFittedHDAC)
+    #print(selected_ccrResultsHDAC[,c(1, 22:25)])
+    incProgress(1/1)
+    Sys.sleep(0.1)
+  }
+})
+  })
+  
+  #Single Sample Analysis-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  observeEvent(input$SSA_data, {
+    withProgress(message = 'Analyzing Data', value = 0, {
+      for (i in 1:1) {
+        #output$TR_data <- ({
+        #plus4 <- c("gene_name", "qssm", "qupm", (paste0("rel_fc_", input$select_rows_selected)))
+        #plus5 <- c("gene_name", "qssm", "qupm")
+        inFile <- input$file1
+        if (is.null(inFile))
+          return(NULL)
+        datafile <- read.table(inFile$datapath, sep = "\t", stringsAsFactors = FALSE, header = TRUE, check.names = FALSE)
+        datafile <- datafile[which(datafile$"Potential contaminant" != "+"),]
+        datafile <- datafile[which(datafile$"Reverse" != "+"),]
+        datafile <- datafile[which(datafile$"Only identified by site" != "+"),]
+        datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$"Protein IDs"),";"),"[",1)
+        #datafile$Protein.IDs<-lapply(strsplit(as.character(datafile$Protein.IDs),"|"),"[",2)
+        tokeep <- grep(pattern = "^Reporter intensity corrected|Unique peptides|Peptides|Protein IDs|site|Reverse|Potential", colnames(datafile), value = TRUE)
+        Filtered.df <- datafile[, tokeep]
+        gene_column <- datafile[, "Gene names"]
+        #print(Filtered.df)
+        clist <- as.data.frame(colnames(Filtered.df))
+        #FilteredPlusData <- clist[input$select_rows_selected, ]
+        #plus6 <- c(FilteredPlusData)
+        FilteredPlus <- clist[input$select_rows_selected, ]
+        print(FilteredPlus)
+        list_length <- (length(FilteredPlus))
+        control_list <- list()
+        for (i in 1:(input$control_rep)) {
+        math1 <- list_length - input$control_rep
+        #print(math1)
+        math2 <- math1 + i
+        #print(math2)
+        df <- FilteredPlus[math2]
+        #print(df)
+        control_list[[i]] <- df
+        }
+        control_list <- do.call(rbind, control_list)
+        control_list <- control_list[complete.cases(control_list), ]
+        #print(control_list)
+        Control_data <- Filtered.df[, control_list]
+        Control_datawG <- cbind(gene_column, Control_data)
+        names(Control_datawG)[names(Control_datawG) == 'gene_column'] <- 'Gene names'
+        #print(Control_datawG)
+        Control_datawG$'Gene names' <-  make.names(Control_datawG$'Gene names', unique=TRUE)
+        proteinGroups_Control <- Control_datawG %>% remove_rownames %>% column_to_rownames(v="Gene names")
+        #print(proteinGroups_Control)
+        
+        EAcontrol <- as.data.frame(colnames(Control_data))
+        #print(EAcontrol)
+        Control_compound <- c("Control")
+        Control_rep_count <- list()
+        for (i in 1:(input$control_rep)) {
+          Control_rep_count[[i]] <- i
+        }
+        Control_rep_count <- do.call(rbind, Control_rep_count)
+        Control_rep_count <- Control_rep_count[complete.cases(Control_rep_count), ]
+        Control_rep_count <- as.data.frame(Control_rep_count)
+        #print(Control_rep_count)
+        length <- input$num_drug
+        print(length)
+        Concs <- c(input$ssa1,input$ssa2,input$ssa3,input$ssa4,input$ssa5,input$ssa6,input$ssa7,input$ssa8,input$ssa9,input$ssa10)
+        Con_conc <- Concs[length]
+        ExperimentalAnnotation_Con <- cbind(Control_compound, Control_rep_count, Con_conc, EAcontrol)
+        colnames(ExperimentalAnnotation_Con) <- c("Compound", "Replicate", (paste0("Concentration (",input$ssa_unit,")")), "Intensity Header")
+        #colnames(ExperimentalAnnotation_Con) <- c("Compound", "Replicate", "Concentration (uM)", "Intensity Header")
+        print(ExperimentalAnnotation_Con)
+        
+        Experimental_length <- list_length - input$control_rep
+        Exp_comp_length <- Experimental_length / input$num_replicates #3
+        Exp_rep_length <- Experimental_length / Exp_comp_length #4
+        ###rep_per_compound <- list()
+        ###compound_per_exp <- list()
+        ###for (i in 1:Exp_rep_length) {
+        ###  rep_per_compound[[i]] <- i
+        ###}
+        ReplicateA <- list()
+        ReplicateB <- list()
+        ReplicateC <- list()
+        #for (x in 1:Exp_comp_length) {
+        
+        for (i in 1:Exp_rep_length) {
+          ReplicateA[[i]] <- i
+        #}
+        }
+        ReplicateA <- do.call(rbind, ReplicateA)
+        for (i in 1:Exp_rep_length) {
+          ReplicateB[[i]] <- i
+        }
+        ReplicateB <- do.call(rbind, ReplicateB)
+        for (i in 1:Exp_rep_length) {
+          ReplicateC[[i]] <- i
+        }
+        ReplicateC <- do.call(rbind, ReplicateC)
+        exp_replicates <- rbind(ReplicateA, ReplicateB, ReplicateC)
+        print(exp_replicates)
+        A <- list()
+        for (i in 1:Exp_rep_length) {
+          A[[i]] <- "A"
+        }
+        A <- do.call(rbind, A)
+        B <- list()
+        for (i in 1:Exp_rep_length) {
+          B[[i]] <- "B"
+        }
+        B <- do.call(rbind, B)
+        C <- list()
+        for (i in 1:Exp_rep_length) {
+          C[[i]] <- "C"
+        }
+        C <- do.call(rbind, C)
+        #A <- c("A","A","A","A")
+        #B <- c("B","B","B","B")
+        #C <- c("C","C","C","C")
+        Exp_compound <- c(A,B,C)
+        #print(Exp_compound)
+        Exp_compound <- as.data.frame(Exp_compound)
+        #print(Exp_compound)
+        exp_list <- list()
+        for (i in 1:(list_length - input$control_rep)) {
+          df <- FilteredPlus[i]
+          #print(df)
+          exp_list[[i]] <- df
+          #print(exp_list)
+        }
+        Exp_list <- do.call(rbind, exp_list)
+        #print(Exp_list)
+        exp_conc_1 <- list()
+        for (i in 1:Exp_rep_length) {
+          exp_conc_1[[i]] <- Concs[1]
+        }
+        exp_conc_1 <- do.call(rbind, exp_conc_1)
+        exp_conc_2 <- list()
+        for (i in 1:Exp_rep_length) {
+          exp_conc_2[[i]] <- Concs[2]
+        }
+        exp_conc_2 <- do.call(rbind, exp_conc_2)
+        exp_conc_3 <- list()
+        for (i in 1:Exp_rep_length) {
+          exp_conc_3[[i]] <- Concs[3]
+        }
+        exp_conc_3 <- do.call(rbind, exp_conc_3)
+        exp_conc <- c(exp_conc_1,exp_conc_2,exp_conc_3)
+        exp_conc <- as.data.frame(exp_conc)
+        #exp_conc <- exp_conc[complete.cases(exp_conc), ]
+        exp_conc <- as.data.frame(exp_conc)
+        ExperimentalAnnotation_Exp <- cbind(Exp_compound, exp_replicates, exp_conc, Exp_list)
+        colnames(ExperimentalAnnotation_Exp) <- c("Compound", "Replicate", (paste0("Concentration (",input$ssa_unit,")")), "Intensity Header")
+        #colnames(ExperimentalAnnotation_Exp) <- c("Compound", "Replicate","Concentration (uM)", "Intensity Header")
+        #print(ExperimentalAnnotation_Exp)
+        ExperimentAnnotation <- rbind(ExperimentalAnnotation_Exp, ExperimentalAnnotation_Con)
+        print(ExperimentAnnotation)
+        
+        #list_length <- (length(FilteredPlus))
+        exp_header_list_1 <- list()
+        for (i in 1:(Exp_rep_length)) {
+          #math1 <- list_length - input$control_rep
+          #print(math1)
+          #math2 <- math1 + i
+          #print(math2)
+          df <- FilteredPlus[i]
+          print(df)
+          exp_header_list_1[[i]] <- df
+        }
+        print(exp_header_list_1)
+        exp_header_list_1 <- do.call(rbind, exp_header_list_1)
+        exp_header_list_1 <- exp_header_list_1[complete.cases(exp_header_list_1), ]
+        #print(control_list)
+        Exp_1_data <- Filtered.df[, exp_header_list_1]
+        Exp_1_datawG <- cbind(gene_column, Exp_1_data)
+        names(Exp_1_datawG)[names(Exp_1_datawG) == 'gene_column'] <- 'Gene names'
+        #print(Control_datawG)
+        Exp_1_datawG$'Gene names' <-  make.names(Exp_1_datawG$'Gene names', unique=TRUE)
+        proteinGroups_A <- Exp_1_datawG %>% remove_rownames %>% column_to_rownames(v="Gene names")
+        
+        exp_header_list_2 <- list()
+        for (i in 1:(Exp_rep_length)) {
+          df <- FilteredPlus[(i+Exp_rep_length)]
+          exp_header_list_2[[i]] <- df
+        }
+        print(exp_header_list_2)
+        exp_header_list_2 <- do.call(rbind, exp_header_list_2)
+        exp_header_list_2 <- exp_header_list_2[complete.cases(exp_header_list_2), ]
+        #print(control_list)
+        Exp_2_data <- Filtered.df[, exp_header_list_2]
+        Exp_2_datawG <- cbind(gene_column, Exp_2_data)
+        names(Exp_2_datawG)[names(Exp_2_datawG) == 'gene_column'] <- 'Gene names'
+        #print(Control_datawG)
+        Exp_2_datawG$'Gene names' <-  make.names(Exp_2_datawG$'Gene names', unique=TRUE)
+        proteinGroups_B <- Exp_2_datawG %>% remove_rownames %>% column_to_rownames(v="Gene names")
+        
+        exp_header_list_3 <- list()
+        for (i in 1:(Exp_rep_length)) {
+          df <- FilteredPlus[(i+Exp_rep_length+Exp_rep_length)]
+          exp_header_list_3[[i]] <- df
+        }
+        print(exp_header_list_3)
+        exp_header_list_3 <- do.call(rbind, exp_header_list_3)
+        exp_header_list_3 <- exp_header_list_3[complete.cases(exp_header_list_3), ]
+        #print(control_list)
+        Exp_3_data <- Filtered.df[, exp_header_list_3]
+        Exp_3_datawG <- cbind(gene_column, Exp_3_data)
+        names(Exp_3_datawG)[names(Exp_3_datawG) == 'gene_column'] <- 'Gene names'
+        #print(Control_datawG)
+        Exp_3_datawG$'Gene names' <-  make.names(Exp_3_datawG$'Gene names', unique=TRUE)
+        proteinGroups_C <- Exp_3_datawG %>% remove_rownames %>% column_to_rownames(v="Gene names")
+        
+        exp_header_list_con <- list()
+        for (i in 1:(Exp_rep_length)) {
+          df <- FilteredPlus[(i+Exp_rep_length+Exp_rep_length+Exp_rep_length)]
+          exp_header_list_con[[i]] <- df
+        }
+        print(exp_header_list_con)
+        exp_header_list_con <- do.call(rbind, exp_header_list_con)
+        exp_header_list_con <- exp_header_list_con[complete.cases(exp_header_list_con), ]
+        #print(control_list)
+        Exp_con_data <- Filtered.df[, exp_header_list_con]
+        Exp_con_datawG <- cbind(gene_column, Exp_con_data)
+        names(Exp_con_datawG)[names(Exp_con_datawG) == 'gene_column'] <- 'Gene names'
+        #print(Control_datawG)
+        Exp_con_datawG$'Gene names' <-  make.names(Exp_con_datawG$'Gene names', unique=TRUE)
+        Control <- Exp_con_datawG %>% remove_rownames %>% column_to_rownames(v="Gene names")
+        
+        ExperimentAnnotationA <- ExperimentAnnotation %>% remove_rownames %>% column_to_rownames(v="Intensity Header")
+        print(ExperimentAnnotationA)
+        ExperimentAnnotationA <- ExperimentAnnotationA[-c(((Exp_rep_length)+1):list_length), ]
+        
+        ExperimentAnnotationB <- ExperimentAnnotation %>% remove_rownames %>% column_to_rownames(v="Intensity Header")
+        ExperimentAnnotationB <- ExperimentAnnotationB[-c(1:Exp_rep_length,(((Exp_rep_length)*2)+1):list_length), ]
+        
+        ExperimentAnnotationC <- ExperimentAnnotation %>% remove_rownames %>% column_to_rownames(v="Intensity Header")
+        ExperimentAnnotationC <- ExperimentAnnotationC[-c(1:((Exp_rep_length)*2),(((list_length)-(input$control_rep))+1):list_length), ]
+        
+        ExperimentAnnotation_con <- ExperimentAnnotation %>% remove_rownames %>% column_to_rownames(v="Intensity Header")
+        ExperimentAnnotation_con <- ExperimentAnnotation_con[-c(1:((Exp_rep_length)*3)), ]
+        
+        all(rownames(ExperimentAnnotationA) == colnames(proteinGroups_A))
+        all(rownames(ExperimentAnnotationB) == colnames(proteinGroups_B))
+        all(rownames(ExperimentAnnotationC) == colnames(proteinGroups_C))
+        all(rownames(ExperimentAnnotation_con) == colnames(Control))
+        
+        dds1 <- DESeqDataSetFromMatrix(countData = round(proteinGroups_A),colData = ExperimentAnnotationA, design = ~Replicate)
+        dds1 <- DESeq(dds1)
+        res1 <- results(dds1)
+        print(res1)
+        dds2 <- DESeqDataSetFromMatrix(countData = round(proteinGroups_B),colData = ExperimentAnnotationB, design = ~Replicate)
+        dds2 <- DESeq(dds2)
+        res2 <- results(dds2)
+        print(res2)
+        dds3 <- DESeqDataSetFromMatrix(countData = round(proteinGroups_C),colData = ExperimentAnnotationC, design = ~Replicate)
+        dds3 <- DESeq(dds3)
+        res3 <- results(dds3)
+        print(res3)
+        dds_con <- DESeqDataSetFromMatrix(countData = round(Control),colData = ExperimentAnnotation_con, design = ~Replicate)
+        dds_con <- DESeq(dds_con)
+        res_con <- results(dds_con)
+        print(res_con)
+        
+        p1 <- EnhancedVolcano(res1,
+                              lab = rownames(res1),
+                              x = 'log2FoldChange',
+                              y = 'pvalue',
+                              title = 'proteinGroups_A',
+                              pCutoff = 10e-8,
+                              FCcutoff = 0.5,
+                              pointSize = 0.75,
+                              labSize = 2.0,
+                              labCol = "black",
+                              labFace = "plain",
+                              boxedLabel = FALSE,
+                              cutoffLineType = "twodash",
+                              cutoffLineCol = "red3",
+                              cutoffLineWidth = 0.5,
+                              legendPosition = "bottom",
+                              legendLabSize = 10,
+                              legendIconSize = 2.0,
+                              border = "full",
+                              borderWidth = 0.75,
+                              borderColour = "black")
+        print(p1)
+        p2 <- EnhancedVolcano(res2,
+                              lab = rownames(res2),
+                              x = 'log2FoldChange',
+                              y = 'pvalue',
+                              title = 'proteinGroups_B',
+                              pCutoff = 10e-8,
+                              FCcutoff = 0.5,
+                              pointSize = 0.75,
+                              labSize = 2.0,
+                              labCol = "black",
+                              labFace = "plain",
+                              boxedLabel = FALSE,
+                              cutoffLineType = "twodash",
+                              cutoffLineCol = "red3",
+                              cutoffLineWidth = 0.5,
+                              legendPosition = "bottom",
+                              legendLabSize = 10,
+                              legendIconSize = 2.0,
+                              border = "full",
+                              borderWidth = 0.75,
+                              borderColour = "black")
+        
+        p3 <- EnhancedVolcano(res3,
+                              lab = rownames(res3),
+                              x = 'log2FoldChange',
+                              y = 'pvalue',
+                              title = 'proteinGroups_C',
+                              pCutoff = 10e-8,
+                              FCcutoff = 0.5,
+                              pointSize = 0.75,
+                              labSize = 2.0,
+                              labCol = "black",
+                              labFace = "plain",
+                              boxedLabel = FALSE,
+                              cutoffLineType = "twodash",
+                              cutoffLineCol = "red3",
+                              cutoffLineWidth = 0.5,
+                              legendPosition = "bottom",
+                              legendLabSize = 10,
+                              legendIconSize = 2.0,
+                              border = "full",
+                              borderWidth = 0.75,
+                              borderColour = "black")
+        
+        p_con <- EnhancedVolcano(res_con,
+                              lab = rownames(res_con),
+                              x = 'log2FoldChange',
+                              y = 'pvalue',
+                              title = 'Control',
+                              pCutoff = 10e-8,
+                              FCcutoff = 0.5,
+                              pointSize = 0.75,
+                              labSize = 2.0,
+                              labCol = "black",
+                              labFace = "plain",
+                              boxedLabel = FALSE,
+                              cutoffLineType = "twodash",
+                              cutoffLineCol = "red3",
+                              cutoffLineWidth = 0.5,
+                              legendPosition = "bottom",
+                              legendLabSize = 10,
+                              legendIconSize = 2.0,
+                              border = "full",
+                              borderWidth = 0.75,
+                              borderColour = "black")
+        
+        output$ssa_volcano <- renderPlot(grid.arrange(p1, p2, p3, p_con, ncol=4, top="EnhancedVolcano"))
+       
+        #datalist = list()
+        #for (x in 1:(nrow(results1))) {
+        #  df1 <- results1[x,]
+        #  df2 <- results2[x,]
+        #  combineddf <- rbind(df1,df2)
+        #  datalist[[x]] <- combineddf
+        #}
+        #print(datalist)
+        #MainResults <- do.call(rbind, datalist)
+        #MainResults <- MainResults[complete.cases(MainResults), ]
+        ##Control_1 <- FilteredPlus[math2]
+        ##Control_2 <- FilteredPlus[math3]
+        ##Control_3 <- FilteredPlus[math4]
+        ##Control_4 <- FilteredPlus[math5]
+        ##print(Control_3)
+        #plus2 <- c("Experiment", (paste0("rel_fc_", input$select_rows_selected)))
+        ##plus4 <- c(FilteredPlus)
+        ##print(length(plus4))
+        ##current_drug <- input$DrugName1
+        ##Drugname11 <- (paste0(input$DrugName1, "_1")) 
+        ##Drugname12 <- (paste0(input$DrugName1, "_2"))
+        ##selectedDrug_1 <- grep(pattern = Drugname11, FilteredPlus, value = TRUE)
+        ##selectedDrug_2 <- grep(pattern = Drugname12, FilteredPlus, value = TRUE)
+        ##drug1values <- lapply(strsplit(as.character(selectedDrug_1),"[ ]"),"[",4)
+        ##drug1values <- as.numeric(drug1values)
+        ##drug2values <- lapply(strsplit(as.character(selectedDrug_2),"[ ]"),"[",4)
+        ##drug2values <- as.numeric(drug2values)
+        #print(selectedDrug_1)
+        #print(selectedDrug_2)
+        #print(drug1values)
+        #print(drug2values)
+        ##plus3 <- c("Experiment", "Condition", "ComparisonVT1", "ComparisonVT2", FilteredPlus)
+        ##plus4 <- c(FilteredPlus)
+        ##plus5 <- c("Experiment")
+      }
+      })
+  })
+  
+  
+  
+  #JSON File Metadata collection and export
+    json_data <- reactive({
+      toJSON(
+        list(
+          Name_of_Drug = input$drug_id,
+          Name_of_PI_or_Organization = input$lab,
+          Type_of_Project = input$project_type,
+          Name_of_Project = input$name,
+          Type_of_Experiment = input$experiment_type,
+          Type_of_Process = input$assay_type,
+          Temp_Value1 = input$Temp1,
+          Temp_Value2 = input$Temp2,
+          Temp_Value3 = input$Temp3,
+          Temp_Value4 = input$Temp4,
+          Temp_Value5 = input$Temp5,
+          Temp_Value6 = input$Temp6,
+          Temp_Value7 = input$Temp7,
+          Temp_Value8 = input$Temp8,
+          Temp_Value9 = input$Temp9,
+          Temp_Value10 = input$Temp10,
+          Conc_Value1 = input$conc1,
+          Conc_Value2 = input$conc2,
+          Conc_Value3 = input$conc3,
+          Conc_Value4 = input$conc4,
+          Conc_Value5 = input$conc5,
+          Conc_Value6 = input$conc6,
+          Conc_Value7 = input$conc7,
+          Conc_Value8 = input$conc8,
+          Conc_Value9 = input$conc9,
+          Conc_Value10 = input$conc10,
+          Organism_ID = input$organism,
+          Experiment_Date = input$run_date,
+          Number_of_Samples = input$num_samples,
+          Number_of_Control_Replicants = input$control_rep,
+          Number_of_Experimental_Replicants = input$num_replicates
+          
+        )
+      )
+    })
+    
+    #add.project(reactive(input$name))
+    
+
+  #server_info <- eventReactive(input$process, {
+   # experiment <- json_data
+  #  add.experiment(experiment)
+   # add.project(experiment)
+  #})
+  
+  #output$list <- renderPrint({
+   # list.projects()
+  #})
+  
+  output$process <- downloadHandler(
+    filename = function() {
+      "data.json"
+    },
+    content = function(file) {
+      write_json(data(), file)
+    }
+  )
+  
+  resultPath = file.path(getwd(), 'ShinyRData')
+  
+  observeEvent(input$meltingcurve, {
+    TRresults <- analyzeTPPTR(configTable = hdacTR_config,
+                              methods = "meltcurvefit",
+                              data = selected_data,
+                              nCores = 2,
+                              resultPath = resultPath,
+                              plotCurves = FALSE)
+
+  })
+}
+
+shinyApp(ui, server)
